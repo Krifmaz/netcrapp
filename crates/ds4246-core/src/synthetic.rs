@@ -74,7 +74,7 @@ fn element(t: u8, i: usize) -> [u8; 4] {
         T::TEMPERATURE => [0x01, 0, 20 + 24 + i as u8 * 2, 0],
         T::ESC_ELECTRONICS => match i {
             0 => [0x01, 0, 0x01, 0x80], // this IOM, REPORT
-            _ => [0x05, 0, 0, 0],       // partner not installed
+            _ => [0x01, 0, 0, 0x80],    // partner installed, different firmware
         },
         T::ENCLOSURE => [0x01, 0, 0x02, 0x00], // FAILURE INDICATION
         T::DISPLAY => [0x01, 0x01, b'0', b'0'],
@@ -111,6 +111,8 @@ pub fn descriptor_page() -> Vec<u8> {
                 T::POWER_SUPPLY => format!("Power Supply {}", i + 1),
                 T::COOLING => format!("Fan {}", i + 1),
                 T::TEMPERATURE => format!("Temp Sensor {}", i + 1),
+                T::ESC_ELECTRONICS => format!("TP=BA;SN=FAKE{i};FW={};AI={};", if i == 0 { "0172" } else { "0171" }, if i == 0 { "B" } else { "A" }),
+                T::ENCLOSURE => "ID=00 ;WWN=FAKE;".into(),
                 _ => String::new(),
             };
             b.extend([0, 0]);
@@ -215,7 +217,12 @@ mod tests {
         assert_eq!(bays[7].slot_number, Some(7));
         assert!(bays[7].addl.is_some());
         assert!(bays[5].addl.is_none());
-        assert!(r.of_type(&[0x07]).next().unwrap().reporting);
+        let iom = r.of_type(&[0x07]).next().unwrap();
+        assert!(iom.reporting);
+        assert_eq!(iom.name, "IOM B");
+        assert_eq!(r.shelf_id(), Some("00"));
+        assert!(r.led.reasons.iter().any(|x| x.source == "IOM firmware mismatch"));
+        assert!(r.led.headline.contains("IOM B runs 0172"));
         assert_eq!(r.vendor_pages, vec![0x10, 0x80, 0x81]);
         let fan = r.of_type(&[0x03]).next().unwrap();
         assert!(matches!(fan.status.detail, ElementDetail::Fan { rpm: 14200, speed_code: 7, .. }));

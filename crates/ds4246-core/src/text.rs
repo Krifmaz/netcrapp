@@ -7,6 +7,9 @@ use crate::ses::status::ElementDetail;
 use crate::ses::types::ElementType as T;
 
 pub fn element_value(e: &Element) -> String {
+    if let Some(fw) = e.attr("FW") {
+        return format!("FW {fw}");
+    }
     match &e.status.detail {
         ElementDetail::Fan { rpm, speed_code, speed_name, .. } => format!("{rpm} rpm, speed code {speed_code} ({speed_name})"),
         ElementDetail::Temperature { celsius: Some(c) } => format!("{c} °C"),
@@ -33,7 +36,8 @@ fn line(out: &mut String, e: &Element) {
         Some(Level::Ident) => " *",
         _ => "  ",
     };
-    let _ = writeln!(out, "  {marker} {:<22} {:<14} {extra}", e.name, e.status.code_name);
+    let this = if e.reporting { " (this path)" } else { "" };
+    let _ = writeln!(out, "  {marker} {:<22} {:<14} {extra}", format!("{}{this}", e.name), e.status.code_name);
 }
 
 pub fn render_enclosure(out: &mut String, r: &EnclosureReport) {
@@ -47,6 +51,9 @@ pub fn render_enclosure(out: &mut String, r: &EnclosureReport) {
         inq.map(|i| i.product.as_str()).unwrap_or("?"),
         inq.map(|i| i.revision.as_str()).unwrap_or("?"),
     );
+    if let Some(id) = r.shelf_id() {
+        let _ = writeln!(out, "  shelf ID: {id}");
+    }
     if let Some(cfg) = &r.config {
         for s in &cfg.subenclosures {
             let _ = writeln!(out, "  subenclosure {}: {} {} rev {} (ES process {}/{})", s.id, s.vendor, s.product, s.revision, s.relative_es_process_id, s.num_es_processes);

@@ -58,6 +58,15 @@ pub struct Element {
     pub flags: Vec<Flag>,
     /// For IOMs: true if this is the controller answering on this sg device.
     pub reporting: bool,
+    /// NetApp packs `KEY=VALUE;` pairs into element descriptors
+    /// (FW=, SN=, PN=, AI=, ID=, ...). Parsed here; may contain serials.
+    pub attrs: Vec<(String, String)>,
+}
+
+impl Element {
+    pub fn attr(&self, key: &str) -> Option<&str> {
+        self.attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
+    }
 }
 
 impl Element {
@@ -110,6 +119,11 @@ pub struct EnclosureReport {
 }
 
 impl EnclosureReport {
+    /// Shelf ID as reported in the Enclosure element descriptor (NetApp `ID=`).
+    pub fn shelf_id(&self) -> Option<&str> {
+        self.of_type(&[T::ENCLOSURE]).find_map(|e| e.attr("ID"))
+    }
+
     pub fn logical_id(&self) -> Option<&str> {
         self.config.as_ref()?.subenclosures.first().map(|s| s.logical_id.as_str())
     }
@@ -121,6 +135,21 @@ impl EnclosureReport {
     pub fn of_type<'a>(&'a self, codes: &'a [u8]) -> impl Iterator<Item = &'a Element> + 'a {
         self.elements.iter().filter(move |e| codes.contains(&e.type_code))
     }
+}
+
+/// Parses NetApp-style `KEY=VALUE;KEY=VALUE;` descriptors. Returns nothing for
+/// ordinary descriptor text.
+pub fn parse_kv(desc: &str) -> Vec<(String, String)> {
+    if !desc.contains('=') || !desc.contains(';') {
+        return Vec::new();
+    }
+    desc.split(';')
+        .filter_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            let k = k.trim();
+            (!k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric())).then(|| (k.to_string(), v.trim().to_string()))
+        })
+        .collect()
 }
 
 fn default_name(t: u8, i: usize, count: usize) -> String {
@@ -257,7 +286,13 @@ pub fn build(read: &EnclosureRead, disks: &[DiskInfo]) -> EnclosureReport {
                 from_addl.or(from_status).unwrap_or(i as u8)
             });
             let disk = if ElementType(t).is_slot() { slot_disk(addl.as_ref(), slot_number, rep.hctl.as_deref(), disks).cloned() } else { None };
-            let name = if descriptor.is_empty() { default_name(t, i, n) } else { descriptor.clone() };
+            let attrs = parse_kv(&descriptor);
+            let name = match (t, attrs.iter().find(|(k, _)| k == "AI").map(|(_, v)| v.as_str())) {
+                // NetApp IOMs say which slot they are in (AI=A / AI=B).
+                (T::ESC_ELECTRONICS, Some(slot @ ("A" | "B"))) => format!("IOM {slot}"),
+                _ if descriptor.is_empty() || !attrs.is_empty() => default_name(t, i, n),
+                _ => descriptor.clone(),
+            };
             let reporting = t == T::ESC_ELECTRONICS && status.bits.contains(&"REPORT");
             rep.elements.push(Element {
                 index,
@@ -273,6 +308,7 @@ pub fn build(read: &EnclosureRead, disks: &[DiskInfo]) -> EnclosureReport {
                 slot_number,
                 disk,
                 reporting,
+                attrs,
             });
             group.elements.push(index);
             index += 1;
@@ -316,6 +352,19 @@ fn explain(rep: &EnclosureReport) -> LedReport {
                 reasons.push(Reason { level: f.level, source: format!("{} (overall)", g.type_name), text: f.text });
             }
         }
+    }
+    let fws: Vec<(&str, &str)> = rep
+        .of_type(&[T::ESC_ELECTRONICS])
+        .filter(|e| e.status.code != 5)
+        .filter_map(|e| Some((e.name.as_str(), e.attr("FW")?)))
+        .collect();
+    if fws.windows(2).any(|w| w[0].1 != w[1].1) {
+        reasons.push(Reason {
+            level: Level::Noncritical,
+            source: "IOM firmware mismatch".into(),
+            text: fws.iter().map(|(n, f)| format!("{n} runs {f}")).collect::<Vec<_>>().join(", "),
+        });
+        hints.push("NetApp IOM6 pairs are expected to run the same firmware. With every PSU, fan, sensor and drive reporting OK, the firmware mismatch between the two IOMs is the most likely reason the shelf fault LED is latched. With only one IOM installed the shelf instead sees a missing partner, which can also hold the LED on. Matching the firmware is a firmware operation (Phase 3); the vendor pages may hold the exact fault code.".into());
     }
     reasons.sort_by_key(|r| std::cmp::Reverse(r.level));
 
@@ -444,7 +493,8 @@ pub fn group_shelves(reports: Vec<EnclosureReport>) -> Vec<Shelf> {
         }
         if s.devices.len() == 1 {
             let iom_count = s.devices[0].of_type(&[T::ESC_ELECTRONICS]).count();
-            if iom_count > 1 {
+            let known_fw = s.devices[0].of_type(&[T::ESC_ELECTRONICS]).filter(|e| e.attr("FW").is_some()).count();
+            if iom_count > 1 && known_fw < iom_count {
                 s.findings.push(Reason {
                     level: Level::Info,
                     source: "Cabling".into(),
@@ -454,4 +504,17 @@ pub fn group_shelves(reports: Vec<EnclosureReport>) -> Vec<Shelf> {
         }
     }
     shelves
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_kv;
+
+    #[test]
+    fn netapp_descriptor() {
+        let kv = parse_kv("TP=BA;SN=000000000000   ;FW=0172;AI=B;NA=B;");
+        assert!(kv.contains(&("FW".into(), "0172".into())));
+        assert!(kv.contains(&("AI".into(), "B".into())));
+        assert!(parse_kv("Power Supply 1").is_empty());
+    }
 }

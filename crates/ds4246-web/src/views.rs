@@ -141,14 +141,14 @@ fn shelf_view(shelf: &Shelf, snap: &Snapshot) -> Markup {
     let r = shelf.primary();
     let led = r.led.indicator_on;
     let display = r.of_type(&[T::DISPLAY]).next();
-    let shelf_id = display.map(|d| match d.status.detail {
+    let shelf_id = r.shelf_id().map(str::to_string).or_else(|| display.map(|d| match d.status.detail {
         ElementDetail::Display { character, .. } => {
             let [a, b] = character.to_be_bytes();
             let c = |x: u8| if (0x20..0x7f).contains(&x) { (x as char).to_string() } else { format!("{x:02x}") };
             format!("{}{}", c(a), c(b))
         }
         _ => "?".into(),
-    });
+    }));
     html! {
         div class="shelf" {
             div class="faceplate" {
@@ -266,12 +266,13 @@ fn ioms(shelf: &Shelf) -> Markup {
         div class="card" {
             h2 { "IOMs" }
             table {
-                thead { tr { th { "Element" } th { "Status" } th { "Bits" } } }
+                thead { tr { th { "Element" } th { "Status" } th { "Firmware" } th { "Bits" } } }
                 tbody {
                     @for e in r.of_type(&[T::ESC_ELECTRONICS]) {
                         tr class=(status_class(e)) {
                             td { (e.name) @if e.reporting { " " span class="muted" { "(answering on " (r.device) ")" } } }
                             td { span class={"pill " (status_class(e))} { (e.status.code_name) } }
+                            td { b { (e.attr("FW").unwrap_or("?")) } }
                             td class="bits" { (e.status.bits.join(", ")) }
                         }
                     }
@@ -353,7 +354,7 @@ pub fn elements(data: &Data) -> Markup {
                                     tr class=(status_class(e)) {
                                         td { (e.index) }
                                         td { (e.type_name) }
-                                        td { (e.name) @if let Some(n) = e.slot_number { span class="muted" { " slot " (n) } } }
+                                        td title=(e.descriptor) { (e.name) @if let Some(n) = e.slot_number { span class="muted" { " slot " (n) } } }
                                         td { span class={"pill " (status_class(e))} { (e.status.code_name) } }
                                         td { (element_value(e)) }
                                         td class="bits" { (e.status.bits.join(", ")) }
