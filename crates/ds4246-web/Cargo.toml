@@ -1,0 +1,22 @@
+[package]
+name = "ds4246-web"
+description = "Read-only web dashboard for the NetApp DS4246 shelf over SES"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ds4246-core.workspace = true
+anyhow.workspace = true
+libc.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "form", "json", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+maud = "0.27"
+toml = "0.9"
+argon2 = { version = "0.5", features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rpassword = "7"

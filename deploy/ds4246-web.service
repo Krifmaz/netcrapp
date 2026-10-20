@@ -1,0 +1,47 @@
+# Install:
+#   install -m 755 target/release/ds4246-web /usr/local/bin/
+#   install -d -m 700 /etc/ds4246-web
+#   install -m 600 deploy/config.example.toml /etc/ds4246-web/config.toml   # then edit
+#   install -m 644 deploy/ds4246-web.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now ds4246-web
+[Unit]
+Description=DS4246 SES dashboard (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ds4246-web --config /etc/ds4246-web/config.toml
+# Root is needed for SG_IO on /dev/sg*; capabilities and filesystem are
+# narrowed below so the service can't touch the rest of the hypervisor.
+User=root
+StateDirectory=ds4246-web
+WorkingDirectory=/var/lib/ds4246-web
+Restart=on-failure
+RestartSec=5
+
+CapabilityBoundingSet=CAP_SYS_RAWIO
+AmbientCapabilities=
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ds4246-web
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+# Only the SCSI generic nodes; block devices (/dev/sd*) are not reachable.
+DevicePolicy=closed
+DeviceAllow=char-sg r
+
+[Install]
+WantedBy=multi-user.target

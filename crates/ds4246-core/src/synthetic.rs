@@ -5,6 +5,7 @@
 use chrono::Utc;
 
 use crate::collect::{EnclosureRead, RawPage};
+use crate::discover::DiskInfo;
 use crate::scsi::IdentityRaw;
 use crate::ses::page_name;
 use crate::ses::types::{is_vendor_page, ElementType as T};
@@ -139,6 +140,26 @@ pub fn addl_page() -> Vec<u8> {
     page(0x0A, b)
 }
 
+/// Invented disks matching the fake SAS addresses in [`addl_page`].
+pub fn disks() -> Vec<DiskInfo> {
+    (0..24u8)
+        .filter(|&i| i != 5)
+        .map(|i| DiskInfo {
+            sg: format!("sg{}", i + 10),
+            block: Some(format!("sd{}", (b'a' + i) as char)),
+            hctl: Some(format!("0:0:{}:0", i + 1)),
+            vendor: "SYNTH".into(),
+            model: if i % 3 == 0 { "ST4000NM0023".into() } else { "ST8000NM0055".into() },
+            rev: "0000".into(),
+            serial: None,
+            size_bytes: Some(4_000_787_030_016),
+            sas_address: Some(format!("50000000000020{i:02x}")),
+            temperature_c: Some(30 + (i % 7) + if i == 9 { 25 } else { 0 }),
+            kernel_slot: None,
+        })
+        .collect()
+}
+
 pub fn read() -> EnclosureRead {
     let mut pages = vec![
         (0x01, config_page()),
@@ -199,6 +220,8 @@ mod tests {
         assert!(matches!(fan.status.detail, ElementDetail::Fan { rpm: 14200, speed_code: 7, .. }));
         assert_eq!(fan.name, "Fan 1");
         assert!(r.led.hints.iter().any(|h| h.contains("speed code 6–7")));
+        let with_disks = build(&super::read(), &super::disks());
+        assert_eq!(with_disks.of_type(&[0x17]).filter(|e| e.disk.is_some()).count(), 23);
         let txt = {
             let mut s = String::new();
             crate::text::render_enclosure(&mut s, &r);

@@ -95,7 +95,7 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Demo => {
-            let snap = live::snapshot_from_reads(&[synthetic::read()], Vec::new(), vec!["SYNTHETIC DATA — not from real hardware".into()]);
+            let snap = live::snapshot_from_reads(&[synthetic::read()], synthetic::disks(), vec!["SYNTHETIC DATA — not from real hardware".into()]);
             print!("{}", text::render(&snap));
         }
     }

@@ -1,0 +1,178 @@
+//! Background SES polling. All hardware access is serialized through `hw`.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Utc};
+use ds4246_core::collect::{self, EnclosureRead};
+use ds4246_core::discover::{self, DiskInfo};
+use ds4246_core::report::Snapshot;
+use ds4246_core::{live, synthetic, text};
+
+use crate::auth::Auth;
+use crate::config::Config;
+
+#[derive(Debug, Clone)]
+pub enum Mode {
+    Live,
+    Replay(Vec<PathBuf>),
+    Demo,
+}
+
+impl Mode {
+    pub fn banner(&self) -> Option<String> {
+        match self {
+            Mode::Live => None,
+            Mode::Replay(d) => Some(format!("REPLAY of saved dump(s): {}", d.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))),
+            Mode::Demo => Some("DEMO — synthetic data, not real hardware".into()),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Data {
+    pub snapshot: Option<Snapshot>,
+    /// Latest full read per device (all listed pages + INQUIRY/VPD).
+    pub full_reads: Vec<EnclosureRead>,
+    /// Full reads with the latest polled standard pages merged in.
+    pub merged: Vec<EnclosureRead>,
+    pub last_poll: Option<DateTime<Utc>>,
+    pub last_full: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+pub struct AppState {
+    pub cfg: Config,
+    pub mode: Mode,
+    pub auth: Auth,
+    pub data: RwLock<Data>,
+    hw: Mutex<HwCache>,
+}
+
+#[derive(Default)]
+struct HwCache {
+    temps: HashMap<String, Option<u8>>,
+    temps_at: Option<Instant>,
+}
+
+pub type Shared = Arc<AppState>;
+
+impl AppState {
+    pub fn new(cfg: Config, mode: Mode) -> Self {
+        let auth = Auth::new(cfg.password_hash.clone(), Duration::from_secs(cfg.session_hours * 3600));
+        Self { cfg, mode, auth, data: RwLock::default(), hw: Mutex::default() }
+    }
+
+    fn read(&self, full: bool) -> anyhow::Result<Vec<EnclosureRead>> {
+        Ok(match &self.mode {
+            Mode::Live => live::read_all(full),
+            Mode::Replay(dirs) => dirs.iter().map(|d| collect::load_dump(d)).collect::<std::io::Result<_>>()?,
+            Mode::Demo => vec![synthetic::read()],
+        })
+    }
+
+    fn disks(&self, hw: &mut HwCache) -> Vec<DiskInfo> {
+        match self.mode {
+            Mode::Live => {}
+            Mode::Demo => return synthetic::disks(),
+            Mode::Replay(_) => return Vec::new(),
+        }
+        let mut disks = discover::disks();
+        let every = self.cfg.drive_temp_secs;
+        let due = every > 0 && hw.temps_at.is_none_or(|t| t.elapsed() >= Duration::from_secs(every));
+        if due {
+            discover::fill_temperatures(&mut disks);
+            hw.temps = disks.iter().map(|d| (d.sg.clone(), d.temperature_c)).collect();
+            hw.temps_at = Some(Instant::now());
+        } else {
+            for d in disks.iter_mut().filter(|d| d.temperature_c.is_none()) {
+                d.temperature_c = hw.temps.get(&d.sg).copied().flatten();
+            }
+        }
+        disks
+    }
+
+    /// Blocking: reads hardware and rebuilds the snapshot.
+    pub fn refresh(&self, mut full: bool) -> anyhow::Result<()> {
+        let mut hw = self.hw.lock().unwrap();
+        if self.data.read().unwrap().full_reads.is_empty() {
+            full = true;
+        }
+        let reads = match self.read(full) {
+            Ok(r) => r,
+            Err(e) => {
+                self.data.write().unwrap().error = Some(e.to_string());
+                return Err(e);
+            }
+        };
+        let disks = self.disks(&mut hw);
+        drop(hw);
+
+        let mut data = self.data.write().unwrap();
+        let now = Utc::now();
+        if full {
+            data.full_reads = reads.clone();
+            data.last_full = Some(now);
+        }
+        let merged: Vec<EnclosureRead> = reads.iter().map(|r| merge(data.full_reads.iter().find(|f| f.device == r.device), r)).collect();
+        data.snapshot = Some(live::snapshot_from_reads(&merged, disks, Vec::new()));
+        data.merged = merged;
+        data.last_poll = Some(now);
+        data.error = None;
+        Ok(())
+    }
+
+    /// Blocking: full read, then save one dump set per enclosure device.
+    pub fn save_dump(&self) -> anyhow::Result<Vec<PathBuf>> {
+        self.refresh(true)?;
+        let data = self.data.read().unwrap();
+        let summary = data.snapshot.as_ref().map(text::render).unwrap_or_default();
+        let mut dirs = Vec::new();
+        for r in &data.full_reads {
+            dirs.push(collect::save_dump(&self.cfg.dump_dir, r, &summary)?);
+        }
+        Ok(dirs)
+    }
+}
+
+/// Overlays freshly polled pages on the last full read of the same device.
+fn merge(full: Option<&EnclosureRead>, poll: &EnclosureRead) -> EnclosureRead {
+    let Some(full) = full else { return poll.clone() };
+    if poll.full {
+        return poll.clone();
+    }
+    let mut m = full.clone();
+    for p in &poll.pages {
+        match m.pages.iter_mut().find(|x| x.code == p.code) {
+            Some(slot) => *slot = p.clone(),
+            None => m.pages.push(p.clone()),
+        }
+    }
+    if !poll.supported.is_empty() {
+        m.supported = poll.supported.clone();
+    }
+    m.read_at = poll.read_at;
+    m.errors = poll.errors.clone();
+    m
+}
+
+pub async fn poller(state: Shared) {
+    let every = Duration::from_secs(state.cfg.poll_secs);
+    loop {
+        let s = state.clone();
+        let static_source = !matches!(s.mode, Mode::Live);
+        let res = tokio::task::spawn_blocking(move || s.refresh(false)).await;
+        match res {
+            Ok(Err(e)) => eprintln!("poll failed: {e:#}"),
+            Err(e) => eprintln!("poll task panicked: {e}"),
+            Ok(Ok(())) => {}
+        }
+        if static_source {
+            // Replay/demo data never changes; read once.
+            return;
+        }
+        tokio::time::sleep(every).await;
+    }
+}
