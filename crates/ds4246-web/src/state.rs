@@ -137,6 +137,62 @@ impl AppState {
     }
 }
 
+impl AppState {
+    fn enclosure_device(&self) -> anyhow::Result<String> {
+        if !matches!(self.mode, Mode::Live) {
+            anyhow::bail!("firmware reads need live hardware (not available in demo/replay mode)");
+        }
+        let data = self.data.read().unwrap();
+        data.full_reads.first().map(|r| r.device.clone()).ok_or_else(|| anyhow::anyhow!("no enclosure device found"))
+    }
+
+    /// Blocking: READ BUFFER descriptor probe (mode 03h) on the enclosure.
+    pub fn fw_probe(&self) -> anyhow::Result<(String, Vec<ds4246_core::fw::BufferInfo>)> {
+        let device = self.enclosure_device()?;
+        let _hw = self.hw.lock().unwrap();
+        let dev = ds4246_core::sg::SgDevice::open(format!("/dev/{device}"))?;
+        Ok((device, ds4246_core::fw::probe(&dev)))
+    }
+
+    /// Blocking: reads one buffer twice (mode 02h) and saves it in dump_dir.
+    pub fn fw_read(&self, id: u8) -> anyhow::Result<ds4246_core::fw::SavedImage> {
+        let device = self.enclosure_device()?;
+        let _hw = self.hw.lock().unwrap();
+        let dev = ds4246_core::sg::SgDevice::open(format!("/dev/{device}"))?;
+        Ok(ds4246_core::fw::read_and_save(&dev, &device, id, 32 << 20, &self.cfg.dump_dir, |_, _, _| {})?)
+    }
+
+    /// Every file under dump_dir as (relative path, size), newest directories first.
+    pub fn dump_files(&self) -> Vec<(String, u64)> {
+        fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, u64)>) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            for e in rd.flatten() {
+                let p = e.path();
+                match e.file_type() {
+                    Ok(t) if t.is_dir() => walk(root, &p, out),
+                    Ok(t) if t.is_file() => {
+                        if let Ok(rel) = p.strip_prefix(root) {
+                            out.push((rel.to_string_lossy().to_string(), e.metadata().map(|m| m.len()).unwrap_or(0)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.cfg.dump_dir, &self.cfg.dump_dir, &mut out);
+        out.sort_by(|a, b| b.0.cmp(&a.0));
+        out
+    }
+
+    /// Resolves a relative path inside dump_dir, refusing anything outside it.
+    pub fn dump_file_path(&self, rel: &str) -> Option<PathBuf> {
+        let root = std::fs::canonicalize(&self.cfg.dump_dir).ok()?;
+        let p = std::fs::canonicalize(root.join(rel)).ok()?;
+        (p.starts_with(&root) && p.is_file()).then_some(p)
+    }
+}
+
 /// Overlays freshly polled pages on the last full read of the same device.
 fn merge(full: Option<&EnclosureRead>, poll: &EnclosureRead) -> EnclosureRead {
     let Some(full) = full else { return poll.clone() };

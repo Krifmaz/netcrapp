@@ -59,6 +59,24 @@
   $("#rescan").addEventListener("click", e => action("/action/rescan", "Reading all pages", e.target));
   $("#dump").addEventListener("click", e => action("/action/dump", "Saving dump", e.target));
 
+  // Buttons rendered by the server: <button data-post="/url" data-target="id">
+  document.addEventListener("click", async e => {
+    const btn = e.target.closest("button[data-post]");
+    if (!btn) return;
+    const out = document.getElementById(btn.dataset.target);
+    btn.disabled = true;
+    if (out) out.textContent = "Working… (a firmware read can take a minute)";
+    try {
+      const res = await fetch(btn.dataset.post, { method: "POST", credentials: "same-origin", headers: { "x-ds4246": "1" } });
+      if (res.status === 401) { location.href = "/login"; return; }
+      if (out) out.innerHTML = await res.text();
+    } catch (err) {
+      if (out) out.textContent = "Failed: " + err;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   load($("#tab-dash"));
   setInterval(() => {
     if (paused || document.hidden) return;

@@ -94,41 +94,12 @@ fn fw(cmd: FwCmd) -> Result<()> {
         }
         FwCmd::Read { device, id, max_mib, out } => {
             let dev = SgDevice::open(format!("/dev/{device}"))?;
-            let info = fw::probe(&dev).into_iter().find(|b| b.id == id).ok_or_else(|| anyhow::anyhow!("buffer {id:#04x} not reported by probe"))?;
-            let max = max_mib.saturating_mul(1 << 20);
-            let mut images = Vec::new();
-            for pass in 1..=2 {
-                let (data, err) = fw::read(&dev, &info, max, |done, total| {
-                    eprint!("\rpass {pass}: {done}/{total} bytes");
-                });
-                eprintln!();
-                if let Some(e) = err {
-                    println!("pass {pass} stopped at {} bytes: {e}", data.len());
-                }
-                images.push(data);
-            }
-            let (a, b) = (&images[0], &images[1]);
-            let stable = a == b;
-            let dir = out.join(&device).join(chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string()).join("fw");
-            std::fs::create_dir_all(&dir)?;
-            let path = dir.join(format!("buffer_{id:02x}.bin"));
-            std::fs::write(&path, a)?;
-            if !stable {
-                std::fs::write(dir.join(format!("buffer_{id:02x}.pass2.bin")), b)?;
-            }
-            let report = format!(
-                "READ BUFFER mode 02h, buffer {id:#04x}, device {device}\ncapacity {} bytes, offset boundary 2^{}\npass1 {} bytes sha256 {}\npass2 {} bytes sha256 {}\nstable: {stable}\n\n{}",
-                info.capacity,
-                info.offset_boundary,
-                a.len(),
-                fw::sha256_hex(a),
-                b.len(),
-                fw::sha256_hex(b),
-                fw::analyze(a)
-            );
-            std::fs::write(dir.join(format!("buffer_{id:02x}.report.txt")), &report)?;
-            print!("{report}");
-            println!("\nsaved {} (never commit this file)", path.display());
+            let saved = fw::read_and_save(&dev, &device, id, max_mib.saturating_mul(1 << 20), &out, |pass, done, total| {
+                eprint!("\rpass {pass}: {done}/{total} bytes");
+            })?;
+            eprintln!();
+            print!("{}", saved.report);
+            println!("\nsaved {} (never commit this file)", saved.path.display());
         }
         FwCmd::Analyze { file } => print!("{}", fw::analyze(&std::fs::read(file)?)),
     }

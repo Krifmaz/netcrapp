@@ -78,6 +78,7 @@ pub fn shell(poll_secs: u64, banner: Option<String>) -> Markup {
                 button class="tab active" data-tab="dash" { "Dashboard" }
                 button class="tab" data-tab="elements" { "All elements" }
                 button class="tab" data-tab="raw" { "Raw pages" }
+                button class="tab" data-tab="firmware" { "Firmware & files" }
                 button class="tab" data-tab="controls" { "Controls" }
             }
             div class="actions" {
@@ -94,6 +95,7 @@ pub fn shell(poll_secs: u64, banner: Option<String>) -> Markup {
             section id="tab-dash" class="pane" data-src="/frag/dashboard" data-auto="1" { p { "Loading…" } }
             section id="tab-elements" class="pane" data-src="/frag/elements" data-auto="1" hidden {}
             section id="tab-raw" class="pane" data-src="/frag/raw" hidden {}
+            section id="tab-firmware" class="pane" data-src="/frag/firmware" hidden {}
             section id="tab-controls" class="pane" hidden { (controls()) }
         }
     })
@@ -414,4 +416,66 @@ fn raw_device(r: &EnclosureRead) -> Markup {
 
 pub fn message(ok: bool, text: &str) -> Markup {
     html! { span class=(if ok { "okmsg" } else { "error" }) { (text) } }
+}
+
+pub fn firmware(files: &[(String, u64)]) -> Markup {
+    html! {
+        div class="card" {
+            h2 { "Phase 3 — IOM firmware (READ BUFFER, read-only)" }
+            p class="muted" {
+                "Only READ BUFFER modes 02h (data) and 03h (descriptor) can be sent. Reads the IOM answering on the cabled path. "
+                "Images are NetApp firmware: keep them private and never commit them."
+            }
+            button data-post="/action/fw/probe" data-target="fwout" { "Probe buffers" }
+            div id="fwout" class="fwout" {}
+        }
+        div class="card" {
+            h2 { "Saved files (" (files.len()) ")" }
+            p class="muted" { "Everything under the dump directory: SES page dumps and firmware reads." }
+            table {
+                thead { tr { th { "File" } th { "Size" } } }
+                tbody {
+                    @for (f, size) in files {
+                        tr {
+                            td class="mono" { a href={"/files/" (f)} download { (f) } }
+                            td { (size) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn fw_probe(device: &str, bufs: &[ds4246_core::fw::BufferInfo]) -> Markup {
+    html! {
+        @if bufs.is_empty() {
+            p class="error" { "No buffer reported a capacity on " (device) "." }
+        } @else {
+            table {
+                thead { tr { th { "Buffer ID" } th { "Capacity" } th { "Offset boundary" } th {} } }
+                tbody {
+                    @for b in bufs {
+                        tr {
+                            td class="mono" { (format!("{:#04x}", b.id)) }
+                            td { (b.capacity) " bytes" }
+                            td { "2^" (b.offset_boundary) }
+                            td { button data-post={"/action/fw/read?id=" (b.id)} data-target="fwout" { "Read & save" } }
+                        }
+                    }
+                }
+            }
+            @if ds4246_core::fw::ids_look_ignored(bufs) { p class="muted" { "Every ID reports the same size: the IOM probably ignores the buffer ID — read 0x00." } }
+        }
+    }
+}
+
+pub fn fw_saved(rel: &str, img: &ds4246_core::fw::SavedImage) -> Markup {
+    html! {
+        p class=(if img.stable { "okmsg" } else { "error" }) {
+            (img.bytes) " bytes saved, both passes " (if img.stable { "identical" } else { "DIFFER (pass 2 kept separately)" }) ". "
+            a href={"/files/" (rel)} download { "Download .bin" }
+        }
+        pre { (img.report) }
+    }
 }

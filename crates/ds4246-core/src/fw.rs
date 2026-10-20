@@ -190,3 +190,59 @@ mod tests {
         assert!(r.contains("leading 0xFF 100"));
     }
 }
+
+/// Result of [`read_and_save`].
+#[derive(Debug, Clone, Serialize)]
+pub struct SavedImage {
+    pub path: std::path::PathBuf,
+    pub bytes: usize,
+    pub sha256: String,
+    pub stable: bool,
+    pub report: String,
+}
+
+/// Probes, reads buffer `id` twice and saves it under
+/// `<out>/<device>/<timestamp>/fw/` with a report. Read-only on the device.
+pub fn read_and_save(
+    dev: &SgDevice,
+    device: &str,
+    id: u8,
+    max: u32,
+    out: &std::path::Path,
+    mut progress: impl FnMut(u8, u32, u32),
+) -> std::io::Result<SavedImage> {
+    let info = probe(dev)
+        .into_iter()
+        .find(|b| b.id == id)
+        .ok_or_else(|| std::io::Error::other(format!("buffer {id:#04x} not reported by probe")))?;
+    let mut images = Vec::new();
+    let mut notes = String::new();
+    for pass in 1..=2u8 {
+        let (data, err) = read(dev, &info, max, |done, total| progress(pass, done, total));
+        if let Some(e) = err {
+            let _ = writeln!(notes, "pass {pass} stopped at {} bytes: {e}", data.len());
+        }
+        images.push(data);
+    }
+    let (a, b) = (&images[0], &images[1]);
+    let stable = a == b;
+    let dir = out.join(device).join(chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string()).join("fw");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("buffer_{id:02x}.bin"));
+    std::fs::write(&path, a)?;
+    if !stable {
+        std::fs::write(dir.join(format!("buffer_{id:02x}.pass2.bin")), b)?;
+    }
+    let report = format!(
+        "READ BUFFER mode 02h, buffer {id:#04x}, device {device}\ncapacity {} bytes, offset boundary 2^{}\npass1 {} bytes sha256 {}\npass2 {} bytes sha256 {}\nstable: {stable}\n{notes}\n{}",
+        info.capacity,
+        info.offset_boundary,
+        a.len(),
+        sha256_hex(a),
+        b.len(),
+        sha256_hex(b),
+        analyze(a)
+    );
+    std::fs::write(dir.join(format!("buffer_{id:02x}.report.txt")), &report)?;
+    Ok(SavedImage { path, bytes: a.len(), sha256: sha256_hex(a), stable, report })
+}

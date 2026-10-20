@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use axum::body::Body;
-use axum::extract::{Form, Path, Request, State};
+use axum::extract::{Form, Path, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -119,6 +119,10 @@ fn router(state: Shared) -> Router {
         .route("/raw/{device}/{page}", get(raw_page))
         .route("/action/rescan", post(rescan))
         .route("/action/dump", post(dump))
+        .route("/frag/firmware", get(frag_firmware))
+        .route("/action/fw/probe", post(fw_probe))
+        .route("/action/fw/read", post(fw_read))
+        .route("/files/{*path}", get(download_file))
         .route("/logout", post(logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_login));
     Router::new()
@@ -255,4 +259,54 @@ async fn dump(State(st): State<Shared>) -> Html<String> {
         Err(e) => views::message(false, &format!("Dump task failed: {e}")),
     }
     .into_string())
+}
+
+async fn frag_firmware(State(st): State<Shared>) -> Html<String> {
+    let s = st.clone();
+    let files = tokio::task::spawn_blocking(move || s.dump_files()).await.unwrap_or_default();
+    Html(views::firmware(&files).into_string())
+}
+
+async fn fw_probe(State(st): State<Shared>) -> Html<String> {
+    let s = st.clone();
+    Html(match tokio::task::spawn_blocking(move || s.fw_probe()).await {
+        Ok(Ok((dev, bufs))) => views::fw_probe(&dev, &bufs),
+        Ok(Err(e)) => views::message(false, &format!("Probe failed: {e:#}")),
+        Err(e) => views::message(false, &format!("Probe task failed: {e}")),
+    }
+    .into_string())
+}
+
+#[derive(Deserialize)]
+struct FwReadQuery {
+    id: u8,
+}
+
+async fn fw_read(State(st): State<Shared>, Query(q): Query<FwReadQuery>) -> Html<String> {
+    let s = st.clone();
+    Html(match tokio::task::spawn_blocking(move || s.fw_read(q.id)).await {
+        Ok(Ok(img)) => {
+            let rel = img.path.strip_prefix(&st.cfg.dump_dir).map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            views::fw_saved(&rel, &img)
+        }
+        Ok(Err(e)) => views::message(false, &format!("Read failed: {e:#}")),
+        Err(e) => views::message(false, &format!("Read task failed: {e}")),
+    }
+    .into_string())
+}
+
+async fn download_file(State(st): State<Shared>, Path(rel): Path<String>) -> Response {
+    let Some(path) = st.dump_file_path(&rel) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let name: String = rel.replace('/', "_").chars().filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c)).collect();
+    let mut res = Response::new(Body::from(bytes));
+    res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        res.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+    }
+    res
 }
