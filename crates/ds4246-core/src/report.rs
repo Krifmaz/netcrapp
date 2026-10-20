@@ -158,9 +158,14 @@ fn default_name(t: u8, i: usize, count: usize) -> String {
         T::ESC_ELECTRONICS if count == 2 => format!("IOM {}", if i == 0 { 'A' } else { 'B' }),
         T::ENCLOSURE if count == 1 => "Enclosure".into(),
         T::DISPLAY if count == 1 => "Display".into(),
+        0x80..=0xFF => format!("Vendor 0x{t:02x} #{}", i + 1),
         _ => format!("{} {}", element_short_name(t), i + 1),
     }
 }
+
+/// Descriptor keys that carry serials, WWNs, SAS addresses or MACs. Kept out
+/// of the text summary, which people paste into chats and issues.
+pub const SENSITIVE_KEYS: &[&str] = &["SN", "MSN", "WWN", "AA", "SA", "OM", "EM"];
 
 fn element_flags(t: u8, s: &ElementStatus) -> Vec<Flag> {
     let mut f = Vec::new();

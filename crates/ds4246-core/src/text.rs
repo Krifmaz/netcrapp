@@ -21,7 +21,15 @@ pub fn element_value(e: &Element) -> String {
             format!("mode {mode}, chars {:#06x} '{}{}'", character, ch(a), ch(b))
         }
         ElementDetail::Connector { connector_type_name, physical_link, .. } => format!("{connector_type_name}, link {physical_link:#04x}"),
-        _ => String::new(),
+        _ => {
+            let shown: Vec<String> = e
+                .attrs
+                .iter()
+                .filter(|(k, v)| !v.is_empty() && !crate::report::SENSITIVE_KEYS.contains(&k.as_str()))
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
+            shown.join(" ")
+        }
     }
 }
 
