@@ -21,9 +21,10 @@ pub const OP_RECEIVE_DIAGNOSTIC: u8 = 0x1C;
 pub const OP_LOG_SENSE: u8 = 0x4D;
 pub const OP_READ_BUFFER: u8 = 0x3C;
 
-/// READ BUFFER modes allowed (Phase 3): data and descriptor only. Vendor
-/// mode 01h, echo buffers and error-history modes (which can create or clear
-/// snapshots) are refused.
+/// READ BUFFER modes allowed (Phase 3): combined header+data, data and
+/// descriptor. Vendor mode 01h, echo buffers and error-history modes (which
+/// can create or clear snapshots) are refused.
+pub const READ_BUFFER_COMBINED: u8 = 0x00;
 pub const READ_BUFFER_DATA: u8 = 0x02;
 pub const READ_BUFFER_DESCRIPTOR: u8 = 0x03;
 
@@ -63,7 +64,7 @@ pub enum SgError {
     Forbidden(u8),
     #[error("refusing LOG SENSE with SP (save parameters) set")]
     LogSenseSave,
-    #[error("refusing READ BUFFER mode {0:#04x}: only 02h (data) and 03h (descriptor) are allowed")]
+    #[error("refusing READ BUFFER mode {0:#04x}: only 00h, 02h and 03h are allowed")]
     ReadBufferMode(u8),
     #[error("open {path}: {source}")]
     Open { path: PathBuf, source: std::io::Error },
@@ -155,7 +156,7 @@ pub fn check_cdb(cdb: &[u8]) -> Result<(), SgError> {
     }
     if op == OP_READ_BUFFER {
         let mode = cdb.get(1).copied().unwrap_or(0xFF);
-        if mode != READ_BUFFER_DATA && mode != READ_BUFFER_DESCRIPTOR {
+        if ![READ_BUFFER_COMBINED, READ_BUFFER_DATA, READ_BUFFER_DESCRIPTOR].contains(&mode) {
             return Err(SgError::ReadBufferMode(mode));
         }
     }
@@ -222,7 +223,8 @@ mod tests {
         assert!(check_cdb(&log_sense_cdb(0x0D, 100)).is_ok());
         assert!(check_cdb(&read_buffer_cdb(READ_BUFFER_DATA, 0, 0, 4096)).is_ok());
         assert!(check_cdb(&read_buffer_cdb(READ_BUFFER_DESCRIPTOR, 0, 0, 4)).is_ok());
-        for mode in [0x00, 0x01, 0x0A, 0x0B, 0x1C, 0x1F] {
+        assert!(check_cdb(&read_buffer_cdb(READ_BUFFER_COMBINED, 0, 0, 4)).is_ok());
+        for mode in [0x01, 0x0A, 0x0B, 0x1C, 0x1F] {
             assert!(matches!(check_cdb(&read_buffer_cdb(mode, 0, 0, 4)), Err(SgError::ReadBufferMode(_))));
         }
         // SEND DIAGNOSTIC, WRITE BUFFER, FORMAT, WRITE(10), MODE SELECT

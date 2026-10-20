@@ -83,7 +83,8 @@ fn fw(cmd: FwCmd) -> Result<()> {
             let dev = SgDevice::open(format!("/dev/{device}"))?;
             let bufs = fw::probe(&dev);
             if bufs.is_empty() {
-                println!("no buffer reports a capacity (READ BUFFER descriptor mode may be unsupported)");
+                println!("no buffer reports a capacity; diagnosis (read-only):");
+                print!("{}", fw::diagnose(&dev));
             }
             for b in &bufs {
                 println!("buffer id {:#04x}  capacity {:>9} bytes ({:#08x})  offset boundary 2^{}", b.id, b.capacity, b.capacity, b.offset_boundary);

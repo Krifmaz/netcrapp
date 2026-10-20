@@ -447,10 +447,11 @@ pub fn firmware(files: &[(String, u64)]) -> Markup {
     }
 }
 
-pub fn fw_probe(device: &str, bufs: &[ds4246_core::fw::BufferInfo]) -> Markup {
+pub fn fw_probe(device: &str, bufs: &[ds4246_core::fw::BufferInfo], diag: Option<&str>) -> Markup {
     html! {
         @if bufs.is_empty() {
-            p class="error" { "No buffer reported a capacity on " (device) "." }
+            p class="error" { "No buffer reported a capacity on " (device) ". Diagnosis (read-only):" }
+            @if let Some(d) = diag { pre { (d) } }
         } @else {
             table {
                 thead { tr { th { "Buffer ID" } th { "Capacity" } th { "Offset boundary" } th {} } }

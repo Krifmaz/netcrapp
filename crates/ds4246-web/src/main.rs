@@ -270,7 +270,7 @@ async fn frag_firmware(State(st): State<Shared>) -> Html<String> {
 async fn fw_probe(State(st): State<Shared>) -> Html<String> {
     let s = st.clone();
     Html(match tokio::task::spawn_blocking(move || s.fw_probe()).await {
-        Ok(Ok((dev, bufs))) => views::fw_probe(&dev, &bufs),
+        Ok(Ok((dev, bufs, diag))) => views::fw_probe(&dev, &bufs, diag.as_deref()),
         Ok(Err(e)) => views::message(false, &format!("Probe failed: {e:#}")),
         Err(e) => views::message(false, &format!("Probe task failed: {e}")),
     }

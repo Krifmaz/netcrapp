@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::sg::{read_buffer_cdb, SgDevice, SgError, READ_BUFFER_DATA, READ_BUFFER_DESCRIPTOR};
+use crate::sg::{receive_diag_cdb, read_buffer_cdb, SgDevice, SgError, READ_BUFFER_COMBINED, READ_BUFFER_DATA, READ_BUFFER_DESCRIPTOR};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BufferInfo {
@@ -27,6 +27,104 @@ pub fn probe(dev: &SgDevice) -> Vec<BufferInfo> {
         })
         .filter(|b| b.capacity > 0)
         .collect()
+}
+
+/// One subenclosure entry of the Download Microcode Status page (0x0E).
+#[derive(Debug, Clone, Serialize)]
+pub struct MicrocodeStatus {
+    pub subenclosure: u8,
+    pub status: u8,
+    pub status_name: &'static str,
+    pub additional: u8,
+    pub max_size: u32,
+    pub expected_buffer_id: u8,
+    pub buffer_offset: u32,
+}
+
+/// SES-3 Download Microcode Status diagnostic page (0x0E).
+pub fn parse_microcode_status(d: &[u8]) -> Vec<MicrocodeStatus> {
+    if d.len() < 8 || d[0] != 0x0E {
+        return Vec::new();
+    }
+    let end = (4 + u16::from_be_bytes([d[2], d[3]]) as usize).min(d.len());
+    d[8..end]
+        .chunks_exact(16)
+        .map(|e| MicrocodeStatus {
+            subenclosure: e[1],
+            status: e[2],
+            status_name: match e[2] {
+                0x00 => "no download in progress",
+                0x01 => "download in progress",
+                0x02 => "download complete, updating non-volatile storage",
+                0x03 => "updating non-volatile storage with deferred microcode",
+                0x10 => "error, microcode discarded",
+                0x11 => "error, image corrupt, discarded",
+                0x12 => "download timeout, discarded",
+                0x13 => "internal error, new image needed",
+                0x14 => "internal error, hard reset required",
+                0x70..=0x7F => "vendor specific (completed)",
+                0x80..=0xFF => "vendor specific",
+                _ => "reserved",
+            },
+            additional: e[3],
+            max_size: u32::from_be_bytes([e[4], e[5], e[6], e[7]]),
+            expected_buffer_id: e[11],
+            buffer_offset: u32::from_be_bytes([e[12], e[13], e[14], e[15]]),
+        })
+        .collect()
+}
+
+/// Read-only diagnosis for when [`probe`] finds nothing: what the device
+/// answers to each allowed READ BUFFER mode, plus page 0x0E.
+pub fn diagnose(dev: &SgDevice) -> String {
+    let mut o = String::new();
+    let mut ids: Vec<u8> = (0..8).collect();
+    match dev.read_cdb(&receive_diag_cdb(0x0E, 1024), 1024) {
+        Ok(d) => {
+            let _ = writeln!(o, "page 0x0E (download microcode status): {}", crate::hexdump::hex_line(&d));
+            for m in parse_microcode_status(&d) {
+                let _ = writeln!(
+                    o,
+                    "  subenclosure {}: status {:#04x} ({}), additional {:#04x}, max image size {} bytes, expected buffer id {:#04x}, offset {}",
+                    m.subenclosure, m.status, m.status_name, m.additional, m.max_size, m.expected_buffer_id, m.buffer_offset
+                );
+                if !ids.contains(&m.expected_buffer_id) {
+                    ids.push(m.expected_buffer_id);
+                }
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(o, "page 0x0E: {e}");
+        }
+    }
+    let mut errs: Vec<(String, Vec<u8>)> = Vec::new();
+    for id in 0..=255u8 {
+        if let Err(e) = dev.read_cdb(&read_buffer_cdb(READ_BUFFER_DESCRIPTOR, id, 0, 4), 4) {
+            let e = e.to_string();
+            match errs.iter_mut().find(|(m, _)| *m == e) {
+                Some((_, v)) => v.push(id),
+                None => errs.push((e, vec![id])),
+            }
+        }
+    }
+    let _ = writeln!(o, "mode 03h (descriptor), ids 0-255:");
+    if errs.is_empty() {
+        o.push_str("  no errors (all capacities 0)\n");
+    }
+    for (e, v) in &errs {
+        let _ = writeln!(o, "  {} ids: {e}", v.len());
+    }
+    for &id in &ids {
+        let r0 = dev.read_cdb(&read_buffer_cdb(READ_BUFFER_COMBINED, id, 0, 4), 4);
+        let r2 = dev.read_cdb(&read_buffer_cdb(READ_BUFFER_DATA, id, 0, 512), 512);
+        let show = |r: &Result<Vec<u8>, SgError>, n: usize| match r {
+            Ok(d) => format!("{} bytes: {}", d.len(), crate::hexdump::hex_line(&d[..d.len().min(n)])),
+            Err(e) => e.to_string(),
+        };
+        let _ = writeln!(o, "id {id:#04x}: mode 00h header -> {}", show(&r0, 4));
+        let _ = writeln!(o, "          mode 02h first 512 -> {}", show(&r2, 32));
+    }
+    o
 }
 
 /// True if every probed ID reports the same thing (device ignores BUFFER ID).

@@ -147,11 +147,14 @@ impl AppState {
     }
 
     /// Blocking: READ BUFFER descriptor probe (mode 03h) on the enclosure.
-    pub fn fw_probe(&self) -> anyhow::Result<(String, Vec<ds4246_core::fw::BufferInfo>)> {
+    /// When nothing reports a capacity, also returns a read-only diagnosis.
+    pub fn fw_probe(&self) -> anyhow::Result<(String, Vec<ds4246_core::fw::BufferInfo>, Option<String>)> {
         let device = self.enclosure_device()?;
         let _hw = self.hw.lock().unwrap();
         let dev = ds4246_core::sg::SgDevice::open(format!("/dev/{device}"))?;
-        Ok((device, ds4246_core::fw::probe(&dev)))
+        let bufs = ds4246_core::fw::probe(&dev);
+        let diag = bufs.is_empty().then(|| ds4246_core::fw::diagnose(&dev));
+        Ok((device, bufs, diag))
     }
 
     /// Blocking: reads one buffer twice (mode 02h) and saves it in dump_dir.
