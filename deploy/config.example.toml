@@ -18,3 +18,12 @@ drive_temp_secs = 300
 
 session_hours = 12
 allow_non_lan = false
+
+# Temperature-driven fan requests (SES SEND DIAGNOSTIC, cooling elements only).
+# Uses the hottest shelf sensor or drive. Steps: [°C, speed code 1-7].
+# The IOM keeps its own minimum (code 1 ≈ 3100 rpm on a DS4246), so this can
+# only make cooling more aggressive. Any over-temperature warning → code 7.
+[fan_curve]
+enabled = false
+points = [[0, 1], [40, 2], [45, 3], [50, 5], [55, 7]]
+hysteresis_c = 3

@@ -41,6 +41,38 @@ pub struct Data {
     pub last_poll: Option<DateTime<Utc>>,
     pub last_full: Option<DateTime<Utc>>,
     pub error: Option<String>,
+    pub fan: FanState,
+}
+
+/// What the fan curve last did.
+#[derive(Default, Clone)]
+pub struct FanState {
+    pub hottest_c: Option<i16>,
+    pub overheat: bool,
+    pub requested: Option<u8>,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+/// Hottest shelf sensor or drive, and whether any sensor flags over-temperature.
+fn hottest(snap: &Snapshot) -> (Option<i16>, bool) {
+    use ds4246_core::ses::status::ElementDetail;
+    let mut max: Option<i16> = None;
+    let mut overheat = false;
+    for shelf in &snap.shelves {
+        for e in shelf.primary().of_type(&[ds4246_core::ses::types::ElementType::TEMPERATURE]) {
+            if let ElementDetail::Temperature { celsius: Some(c) } = e.status.detail {
+                max = Some(max.map_or(c, |m| m.max(c)));
+            }
+            overheat |= e.status.bits.iter().any(|b| *b == "OT WARNING" || *b == "OT FAILURE");
+        }
+    }
+    for d in &snap.disks {
+        if let Some(t) = d.temperature_c {
+            max = Some(max.map_or(t as i16, |m| m.max(t as i16)));
+        }
+    }
+    (max, overheat)
 }
 
 pub struct AppState {
@@ -138,6 +170,46 @@ impl AppState {
 }
 
 impl AppState {
+    /// Blocking: applies the fan curve after a poll. Sends only when the
+    /// target code changes, or every 10 minutes to re-assert it.
+    pub fn apply_fan_curve(&self) {
+        let Some(fc) = self.cfg.fan_curve.as_ref().filter(|f| f.enabled) else { return };
+        if !matches!(self.mode, Mode::Live) {
+            return;
+        }
+        let (temp, overheat, device, prev) = {
+            let data = self.data.read().unwrap();
+            let Some(snap) = &data.snapshot else { return };
+            let (t, o) = hottest(snap);
+            (t, o, data.full_reads.first().map(|r| r.device.clone()), data.fan.clone())
+        };
+        let target = match (overheat, temp) {
+            (true, _) => 7,
+            (false, Some(t)) => fc.curve.next(t, prev.requested),
+            (false, None) => return, // no readings: leave the IOM in charge
+        };
+        let stale = prev.sent_at.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(10));
+        let mut fan = FanState { hottest_c: temp, overheat, ..prev.clone() };
+        if Some(target) != prev.requested || stale {
+            let res = (|| -> anyhow::Result<()> {
+                let device = device.ok_or_else(|| anyhow::anyhow!("no enclosure device"))?;
+                let _hw = self.hw.lock().unwrap();
+                let dev = ds4246_core::sg::SgDevice::open(format!("/dev/{device}"))?;
+                ds4246_core::control::set_fan_speed(&dev, target, None)?;
+                Ok(())
+            })();
+            match res {
+                Ok(()) => {
+                    fan.requested = Some(target);
+                    fan.sent_at = Some(Utc::now());
+                    fan.error = None;
+                }
+                Err(e) => fan.error = Some(format!("{e:#}")),
+            }
+        }
+        self.data.write().unwrap().fan = fan;
+    }
+
     fn enclosure_device(&self) -> anyhow::Result<String> {
         if !matches!(self.mode, Mode::Live) {
             anyhow::bail!("firmware reads need live hardware (not available in demo/replay mode)");
@@ -222,7 +294,14 @@ pub async fn poller(state: Shared) {
     loop {
         let s = state.clone();
         let static_source = !matches!(s.mode, Mode::Live);
-        let res = tokio::task::spawn_blocking(move || s.refresh(false)).await;
+        let res = tokio::task::spawn_blocking(move || {
+            let r = s.refresh(false);
+            if r.is_ok() {
+                s.apply_fan_curve();
+            }
+            r
+        })
+        .await;
         match res {
             Ok(Err(e)) => eprintln!("poll failed: {e:#}"),
             Err(e) => eprintln!("poll task panicked: {e}"),

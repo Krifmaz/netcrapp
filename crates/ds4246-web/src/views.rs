@@ -124,12 +124,35 @@ fn controls() -> Markup {
     }
 }
 
-pub fn dashboard(data: &Data) -> Markup {
+fn fan_curve(cfg: Option<&crate::config::FanCurveConfig>, f: &crate::state::FanState) -> Markup {
+    let Some(cfg) = cfg.filter(|c| c.enabled) else {
+        return html! {};
+    };
+    html! {
+        div class="card" {
+            h2 { "Fan curve (active)" }
+            p {
+                "Hottest reading " b { (f.hottest_c.map(|t| format!("{t} °C")).unwrap_or_else(|| "?".into())) }
+                @if f.overheat { " " span class="badge crit" { "OT warning → code 7" } }
+                " · requested speed code " b { (f.requested.map(|c| c.to_string()).unwrap_or_else(|| "none yet".into())) }
+                " · last sent " (ts(f.sent_at))
+            }
+            p class="muted" {
+                "Curve: " (cfg.curve.points.iter().map(|(t, c)| format!("{t}°C→{c}")).collect::<Vec<_>>().join(", "))
+                ", hysteresis " (cfg.curve.hysteresis_c) " °C. The IOM keeps its own minimum; this can only raise cooling."
+            }
+            @if let Some(e) = &f.error { p class="error" { "Last request failed: " (e) } }
+        }
+    }
+}
+
+pub fn dashboard(data: &Data, curve: Option<&crate::config::FanCurveConfig>) -> Markup {
     let Some(snap) = &data.snapshot else {
         return html! { p { "No data yet." } @if let Some(e) = &data.error { p class="error" { (e) } } };
     };
     html! {
         p class="muted stamp" { "Polled " (ts(data.last_poll)) " · full read " (ts(data.last_full)) }
+        (fan_curve(curve, &data.fan))
         @if let Some(e) = &data.error { p class="error" { "Last poll failed: " (e) } }
         @for e in &snap.errors { p class="banner" { (e) } }
         @if snap.shelves.is_empty() {

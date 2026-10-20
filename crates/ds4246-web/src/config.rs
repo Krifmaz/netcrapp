@@ -24,6 +24,17 @@ pub struct Config {
     /// Allow binding to 0.0.0.0/:: or a public address. Off by default.
     #[serde(default)]
     pub allow_non_lan: bool,
+    /// Temperature-driven fan requests (SEND DIAGNOSTIC). Off unless enabled.
+    #[serde(default)]
+    pub fan_curve: Option<FanCurveConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FanCurveConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub curve: ds4246_core::control::FanCurve,
 }
 
 fn default_dump_dir() -> PathBuf {
@@ -50,6 +61,9 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if !self.password_hash.starts_with("$argon2") || self.password_hash.contains("REPLACE_ME") {
             bail!("password_hash must be an argon2 hash (run `ds4246-web hash-password`)");
+        }
+        if let Some(fc) = self.fan_curve.as_ref().filter(|f| f.enabled) {
+            fc.curve.validate().map_err(anyhow::Error::msg)?;
         }
         if self.poll_secs < 2 {
             bail!("poll_secs must be >= 2");

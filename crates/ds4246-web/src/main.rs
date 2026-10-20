@@ -204,7 +204,7 @@ async fn index(State(st): State<Shared>) -> Html<String> {
 }
 
 async fn frag_dashboard(State(st): State<Shared>) -> Html<String> {
-    Html(views::dashboard(&st.data.read().unwrap()).into_string())
+    Html(views::dashboard(&st.data.read().unwrap(), st.cfg.fan_curve.as_ref()).into_string())
 }
 
 async fn frag_elements(State(st): State<Shared>) -> Html<String> {

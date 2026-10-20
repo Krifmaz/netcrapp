@@ -91,6 +91,53 @@ pub fn validate(cfg: &ConfigPage, page: &[u8]) -> Result<(), ControlError> {
     Ok(())
 }
 
+/// Temperature → speed-code curve. Step function: the code of the highest
+/// point whose temperature is <= the reading. Going down needs the reading to
+/// fall `hysteresis_c` below that step, so the fans don't hunt.
+/// The IOM keeps its own minimum, so this can only raise cooling.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct FanCurve {
+    /// (°C, speed code 1-7), ascending temperature, non-decreasing code.
+    pub points: Vec<(i16, u8)>,
+    #[serde(default = "default_hysteresis")]
+    pub hysteresis_c: i16,
+}
+
+fn default_hysteresis() -> i16 {
+    3
+}
+
+impl FanCurve {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.points.is_empty() {
+            return Err("fan curve needs at least one point".into());
+        }
+        if self.points.iter().any(|&(_, c)| !(1..=7).contains(&c)) {
+            return Err("fan curve codes must be 1-7".into());
+        }
+        if self.points.windows(2).any(|w| w[1].0 <= w[0].0 || w[1].1 < w[0].1) {
+            return Err("fan curve temperatures must ascend and codes must not decrease".into());
+        }
+        if !(0..=15).contains(&self.hysteresis_c) {
+            return Err("hysteresis_c must be 0-15".into());
+        }
+        Ok(())
+    }
+
+    fn step(&self, temp: i16) -> u8 {
+        self.points.iter().rev().find(|&&(t, _)| temp >= t).map(|&(_, c)| c).unwrap_or(self.points[0].1)
+    }
+
+    /// Code to request for `temp`, given the code requested last time.
+    pub fn next(&self, temp: i16, current: Option<u8>) -> u8 {
+        let raw = self.step(temp);
+        match current {
+            Some(cur) if raw < cur && self.step(temp + self.hysteresis_c) >= cur => cur,
+            _ => raw,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FanReading {
     pub name: String,
@@ -144,6 +191,22 @@ mod tests {
         assert!(selected.iter().all(|e| *e == [0x80, 0, 0, 0x22]));
         let one = build_fan_request(&c, 1, 3, Some(2)).unwrap();
         assert_eq!(one[8..].chunks(4).filter(|e| e[0] & SELECT != 0).count(), 1);
+    }
+
+    #[test]
+    fn curve_steps_and_hysteresis() {
+        let c = FanCurve { points: vec![(0, 1), (40, 2), (45, 4), (50, 7)], hysteresis_c: 3 };
+        c.validate().unwrap();
+        assert_eq!(c.next(35, None), 1);
+        assert_eq!(c.next(41, None), 2);
+        assert_eq!(c.next(47, Some(2)), 4);
+        assert_eq!(c.next(55, None), 7);
+        // Falling from 4: stays at 4 until 45-3 = 42 is passed.
+        assert_eq!(c.next(43, Some(4)), 4);
+        assert_eq!(c.next(41, Some(4)), 2);
+        assert!(FanCurve { points: vec![(40, 3), (30, 4)], hysteresis_c: 3 }.validate().is_err());
+        assert!(FanCurve { points: vec![(40, 3), (50, 2)], hysteresis_c: 3 }.validate().is_err());
+        assert!(FanCurve { points: vec![(40, 8)], hysteresis_c: 3 }.validate().is_err());
     }
 
     #[test]
