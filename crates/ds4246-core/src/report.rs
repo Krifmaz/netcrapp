@@ -359,18 +359,38 @@ fn explain(rep: &EnclosureReport) -> LedReport {
         ));
     }
 
-    let serious: Vec<&Reason> = reasons.iter().filter(|r| r.level >= Level::Noncritical).collect();
-    let headline = match (indicator_on, serious.first()) {
-        (_, Some(top)) => format!(
-            "Fault LED cause: {} — {}{}",
-            top.source,
-            top.text,
-            if serious.len() > 1 { format!(" (+{} more)", serious.len() - 1) } else { String::new() }
-        ),
-        (Some(true), None) => "The enclosure reports its fault indicator ON but no standard element explains it — the cause is likely IOM-internal (see vendor pages and hints).".into(),
-        (Some(false), None) => "SES reports the fault indicator OFF and no element faults. If the LED is lit, it is driven outside standard SES (vendor state, IOM firmware or a missing/mismatched partner IOM).".into(),
-        (None, None) if rep.config.is_none() => "Could not read the configuration page — no explanation possible.".into(),
-        (None, None) => "No enclosure element and no faults in standard pages; check hints and vendor pages.".into(),
+    // Element-level causes, worst first; the Enclosure element and the page
+    // header only say "something is wrong", so they don't count as causes.
+    let generic = |t: &str| t.starts_with("status is") || t == "FAIL bit set";
+    let mut causes: Vec<(String, Vec<String>)> = Vec::new();
+    for r in reasons.iter().filter(|r| r.level >= Level::Noncritical && r.source != "Enclosure" && r.source != "Status page header") {
+        let i = causes.iter().position(|(s, _)| *s == r.source).unwrap_or_else(|| {
+            causes.push((r.source.clone(), Vec::new()));
+            causes.len() - 1
+        });
+        causes[i].1.push(r.text.clone());
+    }
+    let causes: Vec<String> = causes
+        .into_iter()
+        .map(|(src, texts)| {
+            let specific: Vec<&String> = texts.iter().filter(|t| !generic(t)).collect();
+            let shown = if specific.is_empty() { texts.join(", ") } else { specific.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ") };
+            format!("{src}: {shown}")
+        })
+        .collect();
+    let state = match indicator_on {
+        Some(true) => "Fault LED is ON",
+        Some(false) => "SES says the fault indicator is OFF",
+        None => "Fault indicator state not reported",
+    };
+    let headline = if !causes.is_empty() {
+        format!("{state}. Cause{}: {}", if causes.len() > 1 { "s" } else { "" }, causes.join("; "))
+    } else if indicator_on == Some(true) {
+        format!("{state}, but no standard SES element explains it — the cause is likely IOM-internal (see hints and vendor pages).")
+    } else if rep.config.is_none() {
+        "Could not read the configuration page — no explanation possible.".into()
+    } else {
+        format!("{state} and no element reports a fault. If the LED is lit, it is driven outside standard SES (vendor state, IOM firmware, or a missing/mismatched partner IOM — see hints).")
     };
     LedReport { indicator_on, headline, reasons, hints }
 }
