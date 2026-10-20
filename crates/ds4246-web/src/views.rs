@@ -73,7 +73,7 @@ pub fn login(error: Option<&str>) -> Markup {
 pub fn shell(poll_secs: u64, banner: Option<String>) -> Markup {
     page("DS4246 shelf", html! {
         header class="top" data-poll=(poll_secs) {
-            h1 { "DS4246" span class="sub" { " · SES Phase 1 (read-only)" } }
+            h1 { "DS4246" span class="sub" { " · SES monitor (reads only; fan requests via CLI)" } }
             nav {
                 button class="tab active" data-tab="dash" { "Dashboard" }
                 button class="tab" data-tab="elements" { "All elements" }
@@ -446,7 +446,7 @@ pub fn firmware(files: &[(String, u64)]) -> Markup {
         div class="card" {
             h2 { "Phase 3 — IOM firmware (READ BUFFER, read-only)" }
             p class="muted" {
-                "Only READ BUFFER modes 02h (data) and 03h (descriptor) can be sent. Reads the IOM answering on the cabled path. "
+                "Only READ BUFFER modes 00h, 02h and 03h can be sent. Reads the IOM answering on the cabled path. "
                 "Images are NetApp firmware: keep them private and never commit them."
             }
             button data-post="/action/fw/probe" data-target="fwout" { "Probe buffers" }
