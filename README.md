@@ -146,4 +146,4 @@ The unit runs as root but keeps only `CAP_SYS_RAWIO`, a read-only filesystem
 
 ## License
 
-MIT — see `LICENSE`.
+GPL-3.0 — see `LICENSE`.

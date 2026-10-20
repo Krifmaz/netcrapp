@@ -5,7 +5,7 @@ members = ["crates/ds4246-core", "crates/ds4246-ses", "crates/ds4246-web"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-only"
 repository = "https://github.com/krifmaz/netcrapp"
 rust-version = "1.80"
 
