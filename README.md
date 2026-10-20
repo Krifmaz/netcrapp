@@ -32,18 +32,19 @@ Full, documented control of the shelf from Linux:
 
 ## Safety rules (Phase 1)
 
-The tool is **read-only by construction**: every CDB goes through one
-function (`ds4246_core::sg`) that only accepts an allow-list of opcodes and
-always uses data-in (device → host) transfers.
+Reads go through one function (`ds4246_core::sg`) that only accepts an
+allow-list of opcodes with data-in (device → host) transfers. Since Phase 2
+there is exactly **one write**, approved by the owner: fan speed requests.
 
 | Allowed                          | Opcode | Notes                                  |
 |----------------------------------|--------|----------------------------------------|
 | INQUIRY (std + VPD)              | `0x12` |                                        |
 | RECEIVE DIAGNOSTIC RESULTS       | `0x1C` | reads SES pages                        |
 | LOG SENSE (temperature page)     | `0x4D` | drive temps; `SP` (save) bit refused   |
-| READ BUFFER (Phase 3)            | `0x3C` | modes 02h (data) and 03h (descriptor) only |
+| READ BUFFER (Phase 3)            | `0x3C` | modes 00h, 02h and 03h only            |
+| SEND DIAGNOSTIC (Phase 2)        | `0x1D` | page 0x02 only, Cooling elements only, RQST ON + speed code 1–7; validated before sending |
 
-Never sent: SEND DIAGNOSTIC (no SES control pages), WRITE BUFFER / any
+Never sent: any other SES control, WRITE BUFFER / any
 firmware write or download, FORMAT, MODE SELECT, or any write to `/dev/sd*`. The
 tools do not touch Proxmox config, VMs or storage.
 
@@ -143,7 +144,14 @@ Tabs: **Dashboard** (front view of the 24 bays with status/model/temp, fault
 LED explanation, IOMs + firmware, PSUs, fans with speed code/RPM,
 temperatures, voltages), **All elements** (every element, raw status bytes),
 **Raw pages** (hex of every page incl. vendor pages, `.bin` download),
-**Controls** (Phase 2 placeholders, disabled — no control routes exist).
+**Controls** (placeholders, disabled). Optional `[fan_curve]` in the config
+drives fan speed codes from the hottest sensor/drive (off by default; the IOM
+keeps its own minimum, so it can only raise cooling).
+
+```sh
+./ds4246-ses fan show sg0
+./ds4246-ses fan set sg0 --code 2 --yes-write   # watches RPM for 60 s
+```
 
 * Pages 0x01/0x02/0x07/0x0A are polled every `poll_secs`; all other pages are
   read only on start, **Full re-read** and **Save dump** (in case a vendor page
