@@ -13,3 +13,4 @@ pub mod report;
 pub mod text;
 pub mod live;
 pub mod synthetic;
+pub mod fw;

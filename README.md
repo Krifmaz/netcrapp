@@ -41,9 +41,10 @@ always uses data-in (device → host) transfers.
 | INQUIRY (std + VPD)              | `0x12` |                                        |
 | RECEIVE DIAGNOSTIC RESULTS       | `0x1C` | reads SES pages                        |
 | LOG SENSE (temperature page)     | `0x4D` | drive temps; `SP` (save) bit refused   |
+| READ BUFFER (Phase 3)            | `0x3C` | modes 02h (data) and 03h (descriptor) only |
 
 Never sent: SEND DIAGNOSTIC (no SES control pages), WRITE BUFFER / any
-firmware operation, FORMAT, MODE SELECT, or any write to `/dev/sd*`. The
+firmware write or download, FORMAT, MODE SELECT, or any write to `/dev/sd*`. The
 tools do not touch Proxmox config, VMs or storage.
 
 Repository rules: raw dumps, serial numbers, WWNs / SAS addresses and
@@ -113,6 +114,14 @@ sudo ./target/release/ds4246-ses scan --json       # full parsed snapshot
 sudo ./target/release/ds4246-ses dump              # same + ./dumps/<sgN>/<timestamp>/
 ./target/release/ds4246-ses decode dumps/sgN/<ts>  # re-parse a saved dump offline, no root
 ./target/release/ds4246-ses demo                   # synthetic data, no hardware
+```
+
+Phase 3 — read IOM firmware (read-only; images are never committed):
+
+```sh
+./ds4246-ses fw probe sg0                 # buffer IDs + sizes (mode 03h)
+./ds4246-ses fw read sg0 --id <ID>        # reads it twice, saves dumps/sg0/<ts>/fw/ + report
+./ds4246-ses fw analyze <file.bin>        # entropy map, signatures, version strings
 ```
 
 A dump directory contains `inquiry.{bin,txt}`, `vpd_XX.{bin,txt}`,

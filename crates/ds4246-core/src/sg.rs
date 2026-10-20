@@ -19,10 +19,17 @@ const SG_INFO_OK_MASK: u32 = 0x1;
 pub const OP_INQUIRY: u8 = 0x12;
 pub const OP_RECEIVE_DIAGNOSTIC: u8 = 0x1C;
 pub const OP_LOG_SENSE: u8 = 0x4D;
+pub const OP_READ_BUFFER: u8 = 0x3C;
+
+/// READ BUFFER modes allowed (Phase 3): data and descriptor only. Vendor
+/// mode 01h, echo buffers and error-history modes (which can create or clear
+/// snapshots) are refused.
+pub const READ_BUFFER_DATA: u8 = 0x02;
+pub const READ_BUFFER_DESCRIPTOR: u8 = 0x03;
 
 /// Opcodes this crate is allowed to send. Everything here moves data from the
 /// device to the host and changes no device state.
-pub const ALLOWED_OPCODES: &[u8] = &[OP_INQUIRY, OP_RECEIVE_DIAGNOSTIC, OP_LOG_SENSE];
+pub const ALLOWED_OPCODES: &[u8] = &[OP_INQUIRY, OP_RECEIVE_DIAGNOSTIC, OP_LOG_SENSE, OP_READ_BUFFER];
 
 #[repr(C)]
 struct SgIoHdr {
@@ -56,6 +63,8 @@ pub enum SgError {
     Forbidden(u8),
     #[error("refusing LOG SENSE with SP (save parameters) set")]
     LogSenseSave,
+    #[error("refusing READ BUFFER mode {0:#04x}: only 02h (data) and 03h (descriptor) are allowed")]
+    ReadBufferMode(u8),
     #[error("open {path}: {source}")]
     Open { path: PathBuf, source: std::io::Error },
     #[error("SG_IO ioctl: {0}")]
@@ -144,6 +153,12 @@ pub fn check_cdb(cdb: &[u8]) -> Result<(), SgError> {
     if op == OP_LOG_SENSE && cdb.len() > 1 && cdb[1] & 0x01 != 0 {
         return Err(SgError::LogSenseSave);
     }
+    if op == OP_READ_BUFFER {
+        let mode = cdb.get(1).copied().unwrap_or(0xFF);
+        if mode != READ_BUFFER_DATA && mode != READ_BUFFER_DESCRIPTOR {
+            return Err(SgError::ReadBufferMode(mode));
+        }
+    }
     Ok(())
 }
 
@@ -189,6 +204,13 @@ pub fn log_sense_cdb(page: u8, alloc: u16) -> [u8; 10] {
     [OP_LOG_SENSE, 0x00, 0x40 | (page & 0x3F), 0, 0, 0, 0, hi, lo, 0]
 }
 
+/// READ BUFFER(10). `offset` and `len` are 24-bit.
+pub fn read_buffer_cdb(mode: u8, id: u8, offset: u32, len: u32) -> [u8; 10] {
+    let o = offset.to_be_bytes();
+    let l = len.to_be_bytes();
+    [OP_READ_BUFFER, mode, id, o[1], o[2], o[3], l[1], l[2], l[3], 0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,8 +220,13 @@ mod tests {
         assert!(check_cdb(&receive_diag_cdb(0x02, 100)).is_ok());
         assert!(check_cdb(&inquiry_cdb(Some(0x83), 100)).is_ok());
         assert!(check_cdb(&log_sense_cdb(0x0D, 100)).is_ok());
-        // SEND DIAGNOSTIC, WRITE BUFFER, READ BUFFER, FORMAT, WRITE(10), MODE SELECT
-        for op in [0x1D, 0x3B, 0x3C, 0x04, 0x2A, 0x15, 0x55] {
+        assert!(check_cdb(&read_buffer_cdb(READ_BUFFER_DATA, 0, 0, 4096)).is_ok());
+        assert!(check_cdb(&read_buffer_cdb(READ_BUFFER_DESCRIPTOR, 0, 0, 4)).is_ok());
+        for mode in [0x00, 0x01, 0x0A, 0x0B, 0x1C, 0x1F] {
+            assert!(matches!(check_cdb(&read_buffer_cdb(mode, 0, 0, 4)), Err(SgError::ReadBufferMode(_))));
+        }
+        // SEND DIAGNOSTIC, WRITE BUFFER, FORMAT, WRITE(10), MODE SELECT
+        for op in [0x1D, 0x3B, 0x04, 0x2A, 0x15, 0x55] {
             assert!(matches!(check_cdb(&[op, 0, 0, 0, 0, 0]), Err(SgError::Forbidden(_))));
         }
         assert!(matches!(check_cdb(&[OP_LOG_SENSE, 0x01, 0x4D, 0, 0, 0, 0, 0, 0, 0]), Err(SgError::LogSenseSave)));

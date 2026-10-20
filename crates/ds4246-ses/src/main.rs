@@ -39,6 +39,9 @@ enum Cmd {
     },
     /// Print the summary for built-in SYNTHETIC pages (no hardware).
     Demo,
+    /// Phase 3: read IOM buffers with READ BUFFER (modes 02h/03h only).
+    #[command(subcommand)]
+    Fw(FwCmd),
     /// Re-read SES pages on an interval and print every byte that changes.
     /// Read-only; for working out vendor counters. Ctrl-C to stop.
     Watch {
@@ -51,6 +54,85 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         interval: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum FwCmd {
+    /// List buffer IDs and capacities (READ BUFFER mode 03h, 4 bytes each).
+    Probe { device: String },
+    /// Read one buffer (mode 02h), twice, and save + analyse it if both reads match.
+    Read {
+        device: String,
+        #[arg(long)]
+        id: u8,
+        /// Stop after this many MiB.
+        #[arg(long, default_value_t = 32)]
+        max_mib: u32,
+        #[arg(long, default_value = "dumps")]
+        out: PathBuf,
+    },
+    /// Analyse a saved image (no device access).
+    Analyze { file: PathBuf },
+}
+
+fn fw(cmd: FwCmd) -> Result<()> {
+    use ds4246_core::fw;
+    use ds4246_core::sg::SgDevice;
+    match cmd {
+        FwCmd::Probe { device } => {
+            let dev = SgDevice::open(format!("/dev/{device}"))?;
+            let bufs = fw::probe(&dev);
+            if bufs.is_empty() {
+                println!("no buffer reports a capacity (READ BUFFER descriptor mode may be unsupported)");
+            }
+            for b in &bufs {
+                println!("buffer id {:#04x}  capacity {:>9} bytes ({:#08x})  offset boundary 2^{}", b.id, b.capacity, b.capacity, b.offset_boundary);
+            }
+            if fw::ids_look_ignored(&bufs) {
+                println!("note: every ID reports the same size — the device probably ignores BUFFER ID; use --id 0");
+            }
+        }
+        FwCmd::Read { device, id, max_mib, out } => {
+            let dev = SgDevice::open(format!("/dev/{device}"))?;
+            let info = fw::probe(&dev).into_iter().find(|b| b.id == id).ok_or_else(|| anyhow::anyhow!("buffer {id:#04x} not reported by probe"))?;
+            let max = max_mib.saturating_mul(1 << 20);
+            let mut images = Vec::new();
+            for pass in 1..=2 {
+                let (data, err) = fw::read(&dev, &info, max, |done, total| {
+                    eprint!("\rpass {pass}: {done}/{total} bytes");
+                });
+                eprintln!();
+                if let Some(e) = err {
+                    println!("pass {pass} stopped at {} bytes: {e}", data.len());
+                }
+                images.push(data);
+            }
+            let (a, b) = (&images[0], &images[1]);
+            let stable = a == b;
+            let dir = out.join(&device).join(chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string()).join("fw");
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join(format!("buffer_{id:02x}.bin"));
+            std::fs::write(&path, a)?;
+            if !stable {
+                std::fs::write(dir.join(format!("buffer_{id:02x}.pass2.bin")), b)?;
+            }
+            let report = format!(
+                "READ BUFFER mode 02h, buffer {id:#04x}, device {device}\ncapacity {} bytes, offset boundary 2^{}\npass1 {} bytes sha256 {}\npass2 {} bytes sha256 {}\nstable: {stable}\n\n{}",
+                info.capacity,
+                info.offset_boundary,
+                a.len(),
+                fw::sha256_hex(a),
+                b.len(),
+                fw::sha256_hex(b),
+                fw::analyze(a)
+            );
+            std::fs::write(dir.join(format!("buffer_{id:02x}.report.txt")), &report)?;
+            print!("{report}");
+            println!("\nsaved {} (never commit this file)", path.display());
+        }
+        FwCmd::Analyze { file } => print!("{}", fw::analyze(&std::fs::read(file)?)),
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -107,6 +189,7 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Watch { device, pages, interval } => watch(&device, &pages, interval)?,
+        Cmd::Fw(c) => fw(c)?,
         Cmd::Demo => {
             let snap = live::snapshot_from_reads(&[synthetic::read()], synthetic::disks(), vec!["SYNTHETIC DATA — not from real hardware".into()]);
             print!("{}", text::render(&snap));
