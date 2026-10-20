@@ -150,6 +150,7 @@ pub fn disks() -> Vec<DiskInfo> {
             hctl: Some(format!("0:0:{}:0", i + 1)),
             vendor: "SYNTH".into(),
             model: if i % 3 == 0 { "ST4000NM0023".into() } else { "ST8000NM0055".into() },
+            display_model: if i % 3 == 0 { "ST4000NM0023".into() } else { "ST8000NM0055".into() },
             rev: "0000".into(),
             serial: None,
             size_bytes: Some(4_000_787_030_016),

@@ -171,7 +171,7 @@ fn shelf_view(shelf: &Shelf, snap: &Snapshot) -> Markup {
             @if !unmapped.is_empty() {
                 details class="card" {
                     summary { "Disks not mapped to a bay (" (unmapped.len()) ")" }
-                    ul { @for d in unmapped { li { (d.block.as_deref().unwrap_or(&d.sg)) " — " (d.vendor) " " (d.model) } } }
+                    ul { @for d in unmapped { li { (d.block.as_deref().unwrap_or(&d.sg)) " — " (d.display_model) } } }
                 }
             }
         }
@@ -201,7 +201,7 @@ fn bay(e: &Element) -> Markup {
             }
             @match &e.disk {
                 Some(d) => {
-                    div class="model" { (d.model) }
+                    div class="model" title=(d.display_model) { (d.display_model) }
                     div class="meta" {
                         span { (d.block.as_deref().unwrap_or(&d.sg)) }
                         @if let Some(t) = d.temperature_c { span class={"temp" @if t >= 50 { " hot" }} { (t) "°C" } }

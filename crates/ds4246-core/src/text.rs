@@ -93,10 +93,9 @@ pub fn render_enclosure(out: &mut String, r: &EnclosureReport) {
             if let Some(d) = &e.disk {
                 let _ = writeln!(
                     out,
-                    "       {} {} {}{}",
+                    "       {} {}{}",
                     d.block.as_deref().unwrap_or(&d.sg),
-                    d.vendor,
-                    d.model,
+                    d.display_model,
                     d.temperature_c.map(|t| format!(" {t} °C")).unwrap_or_default()
                 );
             }

@@ -31,6 +31,9 @@ pub struct DiskInfo {
     pub hctl: Option<String>,
     pub vendor: String,
     pub model: String,
+    /// Vendor + model joined the way the drive reports them; for SATA drives
+    /// behind a translation layer this rebuilds the full ATA model string.
+    pub display_model: String,
     pub rev: String,
     pub serial: Option<String>,
     pub size_bytes: Option<u64>,
@@ -113,7 +116,10 @@ pub fn disks() -> Vec<DiskInfo> {
             let serial = fs::read(dev.join("vpd_pg80")).ok().map(|d| crate::scsi::parse_vpd_serial(&d)).filter(|s| !s.is_empty());
             let size_bytes = s.block.as_ref().and_then(|b| read_trim(format!("/sys/block/{b}/size"))).and_then(|v| v.parse::<u64>().ok()).map(|n| n * 512);
             let kernel_slot = s.hctl.as_ref().and_then(|h| slots.iter().find(|(d, _, _)| d == h)).map(|(_, e, n)| (e.clone(), *n));
+            let raw_vendor = fs::read_to_string(dev.join("vendor")).unwrap_or_default();
+            let raw_model = fs::read_to_string(dev.join("model")).unwrap_or_default();
             DiskInfo {
+                display_model: display_model(&raw_vendor, &raw_model),
                 temperature_c: s.block.as_ref().and_then(|b| hwmon_temp(b)),
                 sg: s.name,
                 block: s.block,
@@ -128,6 +134,16 @@ pub fn disks() -> Vec<DiskInfo> {
             }
         })
         .collect()
+}
+
+/// INQUIRY splits a SATA model across the 8-byte vendor and 16-byte product
+/// fields (e.g. "ST2000LM" + "007-1R8174"), so join the raw padded fields.
+pub fn display_model(raw_vendor: &str, raw_model: &str) -> String {
+    let v = raw_vendor.trim_end_matches('\n');
+    let v = format!("{v:<8}");
+    let joined = format!("{}{}", &v[..8.min(v.len())], raw_model.trim_end_matches('\n'));
+    let collapsed = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.strip_prefix("ATA ").map(str::to_string).unwrap_or(collapsed)
 }
 
 /// `drivetemp` hwmon reading, if that module is loaded.
@@ -147,5 +163,18 @@ pub fn fill_temperatures(disks: &mut [DiskInfo]) {
         if let Ok(dev) = crate::sg::SgDevice::open(Path::new("/dev").join(&d.sg)) {
             d.temperature_c = crate::scsi::read_drive_temperature(&dev).ok().flatten();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_model;
+
+    #[test]
+    fn sata_model_join() {
+        assert_eq!(display_model("ST2000LM\n", "007-1R8174    SM\n"), "ST2000LM007-1R8174 SM");
+        assert_eq!(display_model("WDC     \n", "WD7500BPKT-75PSM\n"), "WDC WD7500BPKT-75PSM");
+        assert_eq!(display_model("ATA     \n", "ST4000NM0033-9ZM\n"), "ST4000NM0033-9ZM");
+        assert_eq!(display_model("SEAGATE \n", "ST4000NM0023    \n"), "SEAGATE ST4000NM0023");
     }
 }
