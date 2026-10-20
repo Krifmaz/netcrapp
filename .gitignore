@@ -1,0 +1,7 @@
+/target
+/dumps
+# never commit anything pulled off the shelf
+*.bin
+*.fw
+*.img
+/config.toml
