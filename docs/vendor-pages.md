@@ -58,3 +58,31 @@ No vendor page shows an obvious fault code. The only non-OK state in the
 standard pages is the Enclosure element's FAILURE INDICATION, and the IOM
 element descriptors show FW=0172 (B) vs FW=0171 (A) — the leading
 explanation for the latched LED.
+
+## Update: PHY 0–3 flapping (watch log, 2026-10-20)
+
+`ds4246-ses watch sg0 --interval 15` over ~5 minutes:
+
+| t      | page 0x80 (IOM B) PHY 0–3 | page 0x81 (IOM A) PHY 0–3 |
+|--------|---------------------------|---------------------------|
+| 0–30 s | down (`12`/`07`)          | down                      |
+| 45 s   | **up 6G** (`00`/`a7`), counter +1 | down              |
+| 90 s   | down, counter +1          | **up 6G**, counter +1     |
+| 135 s  | down                      | down, counter +1          |
+| 285 s  | **up 6G**, counter +1     | down                      |
+
+* Record bytes 26–27 = **link transition counter** (≈2 000 since IOM power-up
+  on PHY 0–3; 1 on the stable PHYs).
+* Byte 1 = down reason (`12` on PHY 0–3, `21` on idle 4–7 of the uncabled
+  IOM, `60` on 0x20–0x23); byte 2 = rate nibble + `7`.
+* Header byte 8 = event sequence counter: +8 on every 4-lane transition
+  (not a clock).
+* Kernel view (`/sys/class/sas_phy/phy-2:1:N`): PHY 4–7 = 6.0 Gbit, 0 resets,
+  0 lost-sync → **PHY 4–7 are the HBA cable** and are clean. PHY 0–3 show
+  `Unknown` (the kernel never saw them link).
+
+So a 4-lane port that is not the host link reaches 6 Gbit/s for ~45 s,
+drops, and the same happens on the other IOM, taking turns. Leading
+hypothesis: the IOM-to-IOM / second-port path repeatedly failing to come up
+— consistent with the firmware mismatch, and a likely contributor to the
+latched fault LED.
