@@ -39,6 +39,9 @@ enum Cmd {
     },
     /// Print the summary for built-in SYNTHETIC pages (no hardware).
     Demo,
+    /// Phase 2: show fans, or request a fan speed code (the only write).
+    #[command(subcommand)]
+    Fan(FanCmd),
     /// Phase 3: read IOM buffers with READ BUFFER (modes 02h/03h only).
     #[command(subcommand)]
     Fw(FwCmd),
@@ -54,6 +57,57 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         interval: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum FanCmd {
+    /// Print each fan's RPM and actual speed code (read-only).
+    Show { device: String },
+    /// WRITE: SEND DIAGNOSTIC page 0x02 requesting speed code 1-7 on the fans,
+    /// then watch the result for 60 s. Undo by requesting the previous code.
+    Set {
+        device: String,
+        #[arg(long)]
+        code: u8,
+        /// Only this fan (1-based); default all.
+        #[arg(long)]
+        fan: Option<usize>,
+        /// Required: confirms you want to send a control command.
+        #[arg(long)]
+        yes_write: bool,
+    },
+}
+
+fn fan(cmd: FanCmd) -> Result<()> {
+    use ds4246_core::control;
+    use ds4246_core::sg::SgDevice;
+    let show = |fans: &[control::FanReading]| {
+        fans.iter().map(|f| format!("{} {}rpm c{}", f.name, f.rpm, f.speed_code)).collect::<Vec<_>>().join("  ")
+    };
+    match cmd {
+        FanCmd::Show { device } => {
+            let dev = SgDevice::open(format!("/dev/{device}"))?;
+            let (_, _, fans) = control::read_fans(&dev)?;
+            println!("{}", show(&fans));
+        }
+        FanCmd::Set { device, code, fan, yes_write } => {
+            if !yes_write {
+                bail!("this sends SEND DIAGNOSTIC to the enclosure; add --yes-write to confirm");
+            }
+            let dev = SgDevice::open(format!("/dev/{device}"))?;
+            let (_, _, before) = control::read_fans(&dev)?;
+            println!("before: {}", show(&before));
+            let target = fan.map(|f| f.checked_sub(1).ok_or_else(|| anyhow::anyhow!("--fan is 1-based"))).transpose()?;
+            control::set_fan_speed(&dev, code, target)?;
+            println!("sent: requested speed code {code} on {}", fan.map(|f| format!("fan {f}")).unwrap_or("all fans".into()));
+            for t in (10..=60).step_by(10) {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let (_, _, now) = control::read_fans(&dev)?;
+                println!("t+{t:>2}s:  {}", show(&now));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -162,6 +216,7 @@ fn main() -> Result<()> {
         }
         Cmd::Watch { device, pages, interval } => watch(&device, &pages, interval)?,
         Cmd::Fw(c) => fw(c)?,
+        Cmd::Fan(c) => fan(c)?,
         Cmd::Demo => {
             let snap = live::snapshot_from_reads(&[synthetic::read()], synthetic::disks(), vec!["SYNTHETIC DATA — not from real hardware".into()]);
             print!("{}", text::render(&snap));

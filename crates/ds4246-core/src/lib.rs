@@ -14,3 +14,4 @@ pub mod text;
 pub mod live;
 pub mod synthetic;
 pub mod fw;
+pub mod control;

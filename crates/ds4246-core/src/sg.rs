@@ -14,12 +14,15 @@ use thiserror::Error;
 
 const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_FROM_DEV: libc::c_int = -3;
+const SG_DXFER_TO_DEV: libc::c_int = -2;
 const SG_INFO_OK_MASK: u32 = 0x1;
 
 pub const OP_INQUIRY: u8 = 0x12;
 pub const OP_RECEIVE_DIAGNOSTIC: u8 = 0x1C;
 pub const OP_LOG_SENSE: u8 = 0x4D;
 pub const OP_READ_BUFFER: u8 = 0x3C;
+/// Never accepted by `read_cdb`; only used by `send_ses_control` (Phase 2).
+pub const OP_SEND_DIAGNOSTIC: u8 = 0x1D;
 
 /// READ BUFFER modes allowed (Phase 3): combined header+data, data and
 /// descriptor. Vendor mode 01h, echo buffers and error-history modes (which
@@ -100,14 +103,34 @@ impl SgDevice {
     pub fn read_cdb(&self, cdb: &[u8], alloc: usize) -> Result<Vec<u8>, SgError> {
         check_cdb(cdb)?;
         let mut buf = vec![0u8; alloc];
+        let resid = self.io(cdb, SG_DXFER_FROM_DEV, &mut buf)?;
+        buf.truncate(alloc.saturating_sub(resid));
+        Ok(buf)
+    }
+
+    /// Phase 2: SEND DIAGNOSTIC with an SES control page. Only reachable
+    /// through [`crate::control`], which builds and validates the page.
+    pub(crate) fn send_ses_control(&self, page: &[u8]) -> Result<(), SgError> {
+        if page.first() != Some(&0x02) || page.len() > 0xFFFF {
+            return Err(SgError::Forbidden(OP_SEND_DIAGNOSTIC));
+        }
+        let [hi, lo] = (page.len() as u16).to_be_bytes();
+        // PF=1, SELFTEST=0, no self-test code, DEVOFFL/UNITOFFL=0.
+        let cdb = [OP_SEND_DIAGNOSTIC, 0x10, 0, hi, lo, 0];
+        let mut data = page.to_vec();
+        self.io(&cdb, SG_DXFER_TO_DEV, &mut data)?;
+        Ok(())
+    }
+
+    fn io(&self, cdb: &[u8], direction: libc::c_int, buf: &mut [u8]) -> Result<usize, SgError> {
         let mut sense = [0u8; 64];
         let mut hdr = SgIoHdr {
             interface_id: b'S' as libc::c_int,
-            dxfer_direction: SG_DXFER_FROM_DEV,
+            dxfer_direction: direction,
             cmd_len: cdb.len() as u8,
             mx_sb_len: sense.len() as u8,
             iovec_count: 0,
-            dxfer_len: alloc as u32,
+            dxfer_len: buf.len() as u32,
             dxferp: buf.as_mut_ptr() as *mut c_void,
             cmdp: cdb.as_ptr(),
             sbp: sense.as_mut_ptr(),
@@ -139,9 +162,7 @@ impl SgDevice {
                 sense: describe_sense(sense),
             });
         }
-        let got = alloc.saturating_sub(hdr.resid.max(0) as usize);
-        buf.truncate(got);
-        Ok(buf)
+        Ok(hdr.resid.max(0) as usize)
     }
 }
 
