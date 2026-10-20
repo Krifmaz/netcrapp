@@ -1,0 +1,13 @@
+[package]
+name = "ds4246-core"
+description = "Read-only SES / SG_IO access and parsing for the NetApp DS4246 shelf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
