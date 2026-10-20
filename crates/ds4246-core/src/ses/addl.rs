@@ -172,7 +172,7 @@ pub fn parse(d: &[u8], cfg: &ConfigPage) -> Result<AddlPage, ParseError> {
         return Err(bad(0x0A, "no generation code"));
     }
     // Element type per individual index, and the sequence used when EIP=0.
-    let types: Vec<u8> = cfg.types.iter().flat_map(|t| std::iter::repeat(t.element_type).take(t.possible_elements as usize)).collect();
+    let types: Vec<u8> = cfg.types.iter().flat_map(|t| std::iter::repeat_n(t.element_type, t.possible_elements as usize)).collect();
     let mut seq = types.iter().enumerate().filter(|(_, &t)| ElementType(t).has_addl_status()).map(|(i, _)| i);
 
     let mut descriptors = Vec::new();
