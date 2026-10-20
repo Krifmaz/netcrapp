@@ -1,0 +1,42 @@
+name: Release
+
+# Push a tag vX.Y.Z to build static x86_64 binaries and publish a GitHub
+# release, so the Proxmox host only needs curl (no Rust, git or apt packages).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ github.ref_name }}
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Test
+        run: cargo test --locked
+      - name: Build static binaries
+        run: cargo build --release --locked --target $TARGET
+      - name: Package
+        run: |
+          D=netcrapp-$VERSION-linux-amd64
+          mkdir -p dist/$D
+          cp target/$TARGET/release/ds4246-ses target/$TARGET/release/ds4246-web dist/$D/
+          strip dist/$D/ds4246-*
+          cp -r deploy README.md LICENSE dist/$D/
+          tar -C dist -czf dist/$D.tar.gz $D
+          cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: netcrapp ${{ env.VERSION }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

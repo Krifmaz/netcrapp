@@ -60,7 +60,19 @@ crates/
 deploy/         systemd unit + example config
 ```
 
-## Build
+## Install (prebuilt, recommended for the Proxmox host)
+
+Releases ship static x86_64 binaries built by GitHub Actions, so the host
+needs only `curl` — no Rust, git or apt packages:
+
+```sh
+V=v0.1.0   # release tag
+curl -fsSLO https://github.com/Krifmaz/netcrapp/releases/download/$V/netcrapp-$V-linux-amd64.tar.gz
+curl -fsSL https://github.com/Krifmaz/netcrapp/releases/download/$V/SHA256SUMS | sha256sum -c --ignore-missing
+tar xzf netcrapp-$V-linux-amd64.tar.gz && cd netcrapp-$V-linux-amd64
+```
+
+## Build from source
 
 Needs a Rust toolchain (`rustup`, installs to `~/.cargo`, no system packages).
 Build on the Proxmox host, or on any Debian box with the same or older glibc
