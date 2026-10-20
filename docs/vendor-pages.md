@@ -28,7 +28,20 @@ Observed on 2026-10-20 with 9 drives in bays 0–8, host cabled to IOM B only:
   0x80 is the answering IOM (B) and 0x81 its partner (A), whose host-side
   PHYs are down because A is not cabled.
 
-To confirm: pull/insert one drive between two dumps and diff PHY `0x08 + bay`.
+**Confirmed 2026-10-20 (remotely, via sysfs):** the kernel's SAS topology puts
+bay *N* on expander PHY `8 + N` for all nine populated bays (sda bay 0 → phy 8 …
+sdc bay 8 → phy 16). So records 0x08–0x1F are drive bays 0–23.
+
+Two dumps 14 minutes apart (13:19 → 13:33 UTC):
+
+* bytes 8–9: `dc 24` → `0b 24` — first byte changes, second fixed (tick/sequence?).
+* host-port PHYs 0–3: counter +6 on every lane (2071→2077, 2075→2081).
+* PHYs 4–7 and all drive PHYs: unchanged.
+
+Equal steps on all four lanes of the wide port point to port-level events
+(link reset of the whole port, or BROADCAST(CHANGE) handling) rather than
+per-lane bit errors. Next check: compare with `mpt2sas`/`mpt3sas` lines in
+`dmesg` for the same window.
 
 ## 0x82 and 0x83 — identical 160-byte tables
 
