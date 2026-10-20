@@ -97,3 +97,17 @@ latched fault LED.
   not — readback of the image with standard modes is not supported.
 * Untested (refused by our guard): vendor mode 01h, echo buffer 0Ah/0Bh,
   error history 1Ch.
+
+## Fan control test (2026-10-20, IOM6E fw 0172 via sg0)
+
+`ds4246-ses fan set sg0 --code N --yes-write` (SEND DIAGNOSTIC page 0x02,
+all 8 Cooling elements, RQST ON + speed code):
+
+* code 1 → accepted (GOOD status), fans stay at code 1, 3050–3100 rpm.
+* code 2 → **accepted, but no change in 60 s**: all fans still code 1.
+* code 1 → accepted.
+
+So the IOM6E takes the control page without error but ignores the requested
+speed code: fan speed is decided internally (IOM firmware and/or the PSU's
+own fan controller). The `[fan_curve]` feature has no effect on this IOM;
+retest after the IOM6 swap.

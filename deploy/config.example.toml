@@ -23,6 +23,8 @@ allow_non_lan = false
 # Uses the hottest shelf sensor or drive. Steps: [°C, speed code 1-7].
 # The IOM keeps its own minimum (code 1 ≈ 3100 rpm on a DS4246), so this can
 # only make cooling more aggressive. Any over-temperature warning → code 7.
+# Tested 2026-10-20: the FAS2554's embedded IOM6E accepts but IGNORES speed
+# requests, so this has no effect there. Retest on plain IOM6.
 [fan_curve]
 enabled = false
 points = [[0, 1], [40, 2], [45, 3], [50, 5], [55, 7]]
