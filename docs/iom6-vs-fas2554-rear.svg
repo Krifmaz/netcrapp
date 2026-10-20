@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect width="900" height="470" fill="#f4f5f7"/>
+  <text x="20" y="30" font-size="18" font-weight="bold" fill="#111">Rear faceplates — schematic, not to scale (from memory; check against real photos)</text>
+
+  <!-- IOM6 -->
+  <text x="20" y="70" font-size="16" font-weight="bold" fill="#111">IOM6 shelf module (111-00190) — 4 ports</text>
+  <rect x="20" y="85" width="860" height="120" rx="8" fill="#3a3f47"/>
+  <rect x="30" y="95" width="18" height="100" rx="3" fill="#8a919b"/>
+  <text x="56" y="112" fill="#ddd">latch</text>
+  <!-- SAS QSFP -->
+  <rect x="140" y="120" width="70" height="40" rx="4" fill="#111" stroke="#9aa" />
+  <text x="150" y="178" fill="#eee">SAS ■</text>
+  <rect x="230" y="120" width="70" height="40" rx="4" fill="#111" stroke="#9aa" />
+  <text x="240" y="178" fill="#eee">SAS ●</text>
+  <!-- ACP RJ45 -->
+  <rect x="360" y="122" width="44" height="36" rx="3" fill="#111" stroke="#9aa"/>
+  <text x="358" y="178" fill="#eee">ACP ■</text>
+  <rect x="420" y="122" width="44" height="36" rx="3" fill="#111" stroke="#9aa"/>
+  <text x="418" y="178" fill="#eee">ACP ●</text>
+  <!-- LEDs -->
+  <circle cx="560" cy="140" r="6" fill="#3c3"/><circle cx="585" cy="140" r="6" fill="#fa2"/>
+  <text x="545" y="178" fill="#eee">status LEDs</text>
+  <text x="700" y="145" fill="#ccc" font-size="15">mostly empty panel</text>
+
+  <!-- FAS2552/2554 controller -->
+  <text x="20" y="250" font-size="16" font-weight="bold" fill="#111">FAS2552 / FAS2554 controller (111-01324) — 10+ ports</text>
+  <rect x="20" y="265" width="860" height="120" rx="8" fill="#3a3f47"/>
+  <rect x="30" y="275" width="18" height="100" rx="3" fill="#8a919b"/>
+  <!-- SAS -->
+  <rect x="60" y="300" width="60" height="36" rx="4" fill="#111" stroke="#9aa"/><text x="66" y="354" fill="#eee">SAS 0a</text>
+  <rect x="130" y="300" width="60" height="36" rx="4" fill="#111" stroke="#9aa"/><text x="136" y="354" fill="#eee">SAS 0b</text>
+  <!-- SFP+ x4 -->
+  <g fill="#111" stroke="#9aa">
+    <rect x="215" y="304" width="34" height="28" rx="2"/><rect x="255" y="304" width="34" height="28" rx="2"/>
+    <rect x="295" y="304" width="34" height="28" rx="2"/><rect x="335" y="304" width="34" height="28" rx="2"/>
+  </g>
+  <text x="222" y="354" fill="#eee">SFP+ e0c – e0f (UTA2)</text>
+  <!-- GbE RJ45 x2 -->
+  <rect x="400" y="302" width="40" height="32" rx="3" fill="#111" stroke="#9aa"/>
+  <rect x="446" y="302" width="40" height="32" rx="3" fill="#111" stroke="#9aa"/>
+  <text x="405" y="354" fill="#eee">e0a  e0b</text>
+  <!-- wrench e0M -->
+  <rect x="510" y="302" width="40" height="32" rx="3" fill="#111" stroke="#fc6"/>
+  <text x="505" y="354" fill="#fc6">🔧 e0M/SP</text>
+  <!-- console -->
+  <rect x="580" y="302" width="40" height="32" rx="3" fill="#111" stroke="#6cf"/>
+  <text x="575" y="354" fill="#6cf">IOIOI console</text>
+  <!-- ACP -->
+  <rect x="660" y="302" width="40" height="32" rx="3" fill="#111" stroke="#9aa"/>
+  <text x="664" y="354" fill="#eee">ACP</text>
+  <!-- USB -->
+  <rect x="725" y="310" width="30" height="14" rx="2" fill="#111" stroke="#9aa"/>
+  <text x="725" y="354" fill="#eee">USB</text>
+  <circle cx="800" cy="300" r="6" fill="#3c3"/><circle cx="825" cy="300" r="6" fill="#fa2"/><circle cx="850" cy="300" r="6" fill="#39f"/>
+  <text x="780" y="330" fill="#eee">LEDs, NVMEM</text>
+
+  <text x="20" y="420" font-size="15" fill="#111">Rule of thumb: 4 ports = IOM6 shelf module. Row of SFP+ cages + IOIOI console + wrench port = controller.</text>
+  <text x="20" y="445" font-size="13" fill="#555">Port mix varies by model/revision (FAS2552 vs FAS2554, UTA2 vs 10GbE) — compare with listing photos.</text>
+</svg>
