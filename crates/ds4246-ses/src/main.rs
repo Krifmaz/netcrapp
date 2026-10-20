@@ -39,6 +39,18 @@ enum Cmd {
     },
     /// Print the summary for built-in SYNTHETIC pages (no hardware).
     Demo,
+    /// Re-read SES pages on an interval and print every byte that changes.
+    /// Read-only; for working out vendor counters. Ctrl-C to stop.
+    Watch {
+        /// Enclosure sg device, e.g. sg0.
+        device: String,
+        /// Page codes in hex.
+        #[arg(long, value_delimiter = ',', default_value = "80,81")]
+        pages: Vec<String>,
+        /// Seconds between reads.
+        #[arg(long, default_value_t = 30)]
+        interval: u64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -94,10 +106,45 @@ fn main() -> Result<()> {
                 print!("{}", text::render(&snap));
             }
         }
+        Cmd::Watch { device, pages, interval } => watch(&device, &pages, interval)?,
         Cmd::Demo => {
             let snap = live::snapshot_from_reads(&[synthetic::read()], synthetic::disks(), vec!["SYNTHETIC DATA — not from real hardware".into()]);
             print!("{}", text::render(&snap));
         }
     }
     Ok(())
+}
+
+fn watch(device: &str, pages: &[String], interval: u64) -> Result<()> {
+    use ds4246_core::sg::{receive_diag_cdb, SgDevice};
+    let codes: Vec<u8> = pages.iter().map(|p| u8::from_str_radix(p.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
+    let dev = SgDevice::open(format!("/dev/{device}"))?;
+    let mut last: Vec<Option<Vec<u8>>> = vec![None; codes.len()];
+    let start = std::time::Instant::now();
+    println!("watching {device} pages {pages:?} every {interval}s (offset: old -> new)");
+    loop {
+        let t = start.elapsed().as_secs();
+        for (i, &code) in codes.iter().enumerate() {
+            let now = match dev.read_cdb(&receive_diag_cdb(code, 65532), 65532) {
+                Ok(d) => d,
+                Err(e) => {
+                    println!("t+{t:>6}s page {code:02x}: {e}");
+                    continue;
+                }
+            };
+            if let Some(prev) = &last[i] {
+                let changes: Vec<String> = now
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, b)| prev.get(*j) != Some(b))
+                    .map(|(j, b)| format!("{j:#05x}: {:02x}->{b:02x}", prev.get(j).copied().unwrap_or(0)))
+                    .collect();
+                if !changes.is_empty() {
+                    println!("t+{t:>6}s page {code:02x}: {}", changes.join("  "));
+                }
+            }
+            last[i] = Some(now);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(interval));
+    }
 }

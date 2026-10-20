@@ -40,8 +40,10 @@ Two dumps 14 minutes apart (13:19 → 13:33 UTC):
 
 Equal steps on all four lanes of the wide port point to port-level events
 (link reset of the whole port, or BROADCAST(CHANGE) handling) rather than
-per-lane bit errors. Next check: compare with `mpt2sas`/`mpt3sas` lines in
-`dmesg` for the same window.
+per-lane bit errors. `dmesg` shows no SAS resets in that window, and two dumps a few seconds
+apart show no change at all (counter or bytes 8–9), so neither is driven by
+our reads. Both tick with time: byte 8 ≈ 47 steps in 817 s (~17 s/step),
+host-port counter +6 (~136 s/step). Use `ds4246-ses watch sg0` to log them.
 
 ## 0x82 and 0x83 — identical 160-byte tables
 
