@@ -86,3 +86,14 @@ drops, and the same happens on the other IOM, taking turns. Leading
 hypothesis: the IOM-to-IOM / second-port path repeatedly failing to come up
 — consistent with the firmware mismatch, and a likely contributor to the
 latched fault LED.
+
+## Firmware readback over SAS (2026-10-20, IOM B fw 0172)
+
+* Page 0x0E: one subenclosure, status 00h (idle), **max image size
+  3 145 728 bytes (3 MiB), expected buffer ID 0x00**, offset 0.
+* READ BUFFER modes 00h, 02h and 03h: every buffer ID 0x00–0xFF returns
+  CHECK CONDITION, ILLEGAL REQUEST, ASC/ASCQ 24h/00h (invalid field in CDB).
+  24h/00h rather than 20h/00h means the opcode is known but these modes are
+  not — readback of the image with standard modes is not supported.
+* Untested (refused by our guard): vendor mode 01h, echo buffer 0Ah/0Bh,
+  error history 1Ch.
